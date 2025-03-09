@@ -24,15 +24,17 @@ import (
 
 // nolint:gocognit, cyclop
 func main() {
-	port := flag.Int("port", 8080, "http server port")
+	port := flag.Int("port", 9080, "http server port")
 	flag.Parse()
 
 	sdpChan := httpSDPServer(*port)
-
+	// fmt.Println("%+v", sdpChan)
+	// fmt.Printf("%+v\n", p) 
 	// Everything below is the Pion WebRTC API, thanks for using it ❤️.
 	offer := webrtc.SessionDescription{}
-	decode(<-sdpChan, &offer)
-	fmt.Println("")
+	fmt.Printf("offer的结构体是%#v\n", offer) 
+	// decode(<-sdpChan, &offer)
+	fmt.Println("收到外部信息")
 
 	peerConnectionConfig := webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
@@ -215,6 +217,8 @@ func encode(obj *webrtc.SessionDescription) string {
 
 // Decode a base64 and unmarshal JSON into a SessionDescription.
 func decode(in string, obj *webrtc.SessionDescription) {
+	in = encode(obj)
+	fmt.Println("输入内容变更：", in)
 	b, err := base64.StdEncoding.DecodeString(in)
 	if err != nil {
 		panic(err)
