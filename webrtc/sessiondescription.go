@@ -4,6 +4,7 @@
 package webrtc
 
 import (
+	"fmt"
 	"github.com/pion/sdp/v3"
 )
 
@@ -18,6 +19,7 @@ type SessionDescription struct {
 
 // Unmarshal is a helper to deserialize the sdp.
 func (sd *SessionDescription) Unmarshal() (*sdp.SessionDescription, error) {
+	fmt.Println("进入session描述符处理阶段")
 	sd.parsed = &sdp.SessionDescription{}
 	err := sd.parsed.UnmarshalString(sd.SDP)
 
