@@ -1081,192 +1081,334 @@ func (pc *PeerConnection) LocalDescription() *SessionDescription {
 //nolint:gocognit,gocyclo,cyclop,maintidx
 func (pc *PeerConnection) SetRemoteDescription(desc SessionDescription) error {
 	if pc.isClosed.get() {
+		fmt.Println("【状态检查】PC已关闭，返回InvalidStateError")
 		return &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
 	}
-
+	
 	isRenegotiation := pc.currentRemoteDescription != nil
-
+	fmt.Printf("【协商判断】是否为重新协商: %v (currentRemoteDescription存在=%v)\n", isRenegotiation, pc.currentRemoteDescription != nil)
+	
 	if _, err := desc.Unmarshal(); err != nil {
+		fmt.Printf("【SDP解析】SDP解析失败! 错误: %v\n", err)
 		return err
+	} else {
+		fmt.Println("【SDP解析】SDP解析成功")
 	}
+	
 	if err := pc.setDescription(&desc, stateChangeOpSetRemote); err != nil {
+		fmt.Printf("【设置描述】设置远程描述失败! 错误类型: %T, 详情: %v\n", err, err)
 		return err
 	}
-
+	fmt.Printf("【设置描述】成功设置远程描述, 新信令状态: %s\n", pc.signalingState.String())
+	
 	if err := pc.api.mediaEngine.updateFromRemoteDescription(*desc.parsed); err != nil {
+		fmt.Printf("【媒体更新】媒体引擎更新失败! 错误: %v\n", err)
 		return err
 	}
-
-	// Disable RTX/FEC on RTPSenders if the remote didn't support it
-	for _, sender := range pc.GetSenders() {
+	fmt.Println("【媒体更新】媒体引擎已根据远程描述更新")
+	
+	fmt.Println("【配置调整】开始配置RTX/FEC...")
+	for i, sender := range pc.GetSenders() {
+		fmt.Printf("【配置调整】配置第%d个Sender: %#v\n", i+1, sender)
 		sender.configureRTXAndFEC()
 	}
-
-	var transceiver *RTPTransceiver
+	fmt.Printf("【配置调整】共配置了%d个Sender\n", len(pc.GetSenders()))
+	
+	transceiver := (*RTPTransceiver)(nil)
 	localTransceivers := append([]*RTPTransceiver{}, pc.GetTransceivers()...)
+	fmt.Printf("【Transceiver】当前本地Transceiver数量: %d\n", len(localTransceivers))
+	
 	detectedPlanB := descriptionIsPlanB(pc.RemoteDescription(), pc.log)
+	fmt.Printf("【PlanB检测】初始PlanB检测结果: %v\n", detectedPlanB)
+	
 	if pc.configuration.SDPSemantics != SDPSemanticsUnifiedPlan {
+		fmt.Println("【语义检测】当前配置非UnifiedPlan语义")
 		detectedPlanB = descriptionPossiblyPlanB(pc.RemoteDescription())
+		fmt.Printf("【PlanB检测】二次PlanB检测结果: %v\n", detectedPlanB)
+	} else {
+		fmt.Println("【语义检测】当前使用UnifiedPlan语义")
 	}
+	
 
 	weOffer := desc.Type == SDPTypeAnswer
 
 	if !weOffer && !detectedPlanB { //nolint:nestif
 		for _, media := range pc.RemoteDescription().parsed.MediaDescriptions {
 			midValue := getMidValue(media)
+			fmt.Printf("【MID解析】解析媒体部分MID值: %q (媒体类型: %s)\n", midValue, media.MediaName.Media)
+			
 			if midValue == "" {
+				fmt.Println("【MID检查】错误：检测到没有MID值的媒体部分，返回errPeerConnRemoteDescriptionWithoutMidValue")
 				return errPeerConnRemoteDescriptionWithoutMidValue
 			}
-
+			
 			if media.MediaName.Media == mediaSectionApplication {
+				fmt.Printf("【媒体过滤】跳过application/datachannel媒体部分 (MID: %s)\n", midValue)
 				continue
 			}
-
+			
 			kind := NewRTPCodecType(media.MediaName.Media)
 			direction := getPeerDirection(media)
+			fmt.Printf("【类型方向】媒体类型: %s(%d) 传输方向: %s\n", kind, kind, direction)
+			
 			if kind == 0 || direction == RTPTransceiverDirectionUnknown {
+				fmt.Printf("【类型检查】跳过无效类型/方向组合 (kind=%d, direction=%d)\n", kind, direction)
 				continue
 			}
-
+			
+			fmt.Printf("【Transceiver匹配】开始查找MID=%q的transceiver (剩余候选:%d)\n", midValue, len(localTransceivers))
 			transceiver, localTransceivers = findByMid(midValue, localTransceivers)
-			if transceiver == nil {
+			
+			if transceiver != nil {
+				fmt.Printf("【MID匹配】找到MID=%q的transceiver: %p (类型: %s, 方向: %s)\n", 
+					midValue, transceiver, transceiver.kind, transceiver.Direction())
+			} else {
+				fmt.Println("【MID匹配】未找到匹配MID，尝试按类型和方向匹配")
 				transceiver, localTransceivers = satisfyTypeAndDirection(kind, direction, localTransceivers)
-			} else if direction == RTPTransceiverDirectionInactive {
-				if err := transceiver.Stop(); err != nil {
-					return err
+				if transceiver != nil {
+					fmt.Printf("【类型匹配】分配%s类型transceiver: %p (原方向: %s)\n", kind, transceiver, transceiver.Direction())
 				}
 			}
-
-			switch {
-			case transceiver == nil:
-				receiver, err := pc.api.NewRTPReceiver(kind, pc.dtlsTransport)
-				if err != nil {
+			
+			if transceiver == nil {
+				fmt.Printf("【错误】找不到符合条件的transceiver (类型:%s 方向:%s)\n", kind, direction)
+				return fmt.Errorf("no compatible transceiver")
+			}else if direction == RTPTransceiverDirectionInactive {
+				fmt.Printf("【状态更新】停止inactive的transceiver: %p\n", transceiver)
+				if err := transceiver.Stop(); err != nil {
+					fmt.Printf("【停止失败】transceiver.Stop()错误: %v\n", err)
 					return err
 				}
-
+				fmt.Printf("【状态更新】成功停止transceiver: %p\n", transceiver)
+			}
+			
+			fmt.Println("【Transceiver处理】开始处理方向匹配逻辑")
+			switch {
+			case transceiver == nil:
+				fmt.Printf("【创建Transceiver】需要新建%s类型Transceiver (远程方向:%s)\n", kind, direction)
+				
+				receiver, err := pc.api.NewRTPReceiver(kind, pc.dtlsTransport)
+				if err != nil {
+					fmt.Printf("【创建失败】无法创建RTPReceiver: %v\n", err)
+					return err
+				}
+				fmt.Printf("【创建成功】新建RTPReceiver: %#v\n", receiver)
+			
 				localDirection := RTPTransceiverDirectionRecvonly
 				if direction == RTPTransceiverDirectionRecvonly {
 					localDirection = RTPTransceiverDirectionSendonly
+					fmt.Println("【方向调整】远程recvonly → 本地sendonly")
 				} else if direction == RTPTransceiverDirectionInactive {
 					localDirection = RTPTransceiverDirectionInactive
+					fmt.Println("【方向调整】同步inactive状态")
 				}
-
+				fmt.Printf("【初始化】新建Transceiver参数: 类型=%s 方向=%s\n", kind, localDirection)
+			
 				transceiver = newRTPTransceiver(receiver, nil, localDirection, kind, pc.api)
+				fmt.Printf("【对象创建】Transceiver实例: %p 当前MID=%q\n", transceiver, transceiver.Mid())
+			
 				pc.mu.Lock()
 				pc.addRTPTransceiver(transceiver)
 				pc.mu.Unlock()
-
-				// if transceiver is create by remote sdp, set prefer codec same as remote peer
+				fmt.Printf("【资源管理】已添加Transceiver到PC，当前总数: %d\n", len(pc.GetTransceivers()))
+			
 				if codecs, err := codecsFromMediaDescription(media); err == nil {
+					fmt.Printf("【编解码协商】开始匹配远程编解码器（数量：%d）\n", len(codecs))
 					filteredCodecs := []RTPCodecParameters{}
-					for _, codec := range codecs {
+					for i, codec := range codecs {
 						if c, matchType := codecParametersFuzzySearch(
 							codec,
 							pc.api.mediaEngine.getCodecsByKind(kind),
 						); matchType == codecMatchExact {
-							// if codec match exact, use payloadtype register to mediaengine
+							fmt.Printf("  [%d] 精确匹配: %s/%d → 使用本地PT: %d\n", 
+								i+1, codec.MimeType, codec.PayloadType, c.PayloadType)
 							codec.PayloadType = c.PayloadType
 							filteredCodecs = append(filteredCodecs, codec)
 						}
 					}
-					_ = transceiver.SetCodecPreferences(filteredCodecs)
+					fmt.Printf("【偏好设置】设置编解码器偏好（数量：%d）\n", len(filteredCodecs))
+					if err := transceiver.SetCodecPreferences(filteredCodecs); err != nil {
+						fmt.Printf("【设置失败】编解码偏好设置错误: %v\n", err)
+					}
 				}
-
+			
 			case direction == RTPTransceiverDirectionRecvonly:
-				if transceiver.Direction() == RTPTransceiverDirectionSendrecv {
+				fmt.Println("【方向协商】处理远程recvonly请求")
+				oldDir := transceiver.Direction()
+				switch {
+				case oldDir == RTPTransceiverDirectionSendrecv:
+					fmt.Println("  sendrecv → sendonly（远程只能接收）")
 					transceiver.setDirection(RTPTransceiverDirectionSendonly)
-				} else if transceiver.Direction() == RTPTransceiverDirectionRecvonly {
+				case oldDir == RTPTransceiverDirectionRecvonly:
+					fmt.Println("  recvonly → inactive（双向关闭）")
 					transceiver.setDirection(RTPTransceiverDirectionInactive)
 				}
+				fmt.Printf("【方向更新】%s → %s\n", oldDir, transceiver.Direction())
+			
 			case direction == RTPTransceiverDirectionSendrecv:
-				if transceiver.Direction() == RTPTransceiverDirectionSendonly {
+				fmt.Println("【方向协商】处理远程sendrecv请求")
+				oldDir := transceiver.Direction()
+				switch {
+				case oldDir == RTPTransceiverDirectionSendonly:
+					fmt.Println("  sendonly → sendrecv（恢复双向）")
 					transceiver.setDirection(RTPTransceiverDirectionSendrecv)
-				} else if transceiver.Direction() == RTPTransceiverDirectionInactive {
+				case oldDir == RTPTransceiverDirectionInactive:
+					fmt.Println("  inactive → recvonly（最小化开放）")
 					transceiver.setDirection(RTPTransceiverDirectionRecvonly)
 				}
+				fmt.Printf("【方向更新】%s → %s\n", oldDir, transceiver.Direction())
+			
 			case direction == RTPTransceiverDirectionSendonly:
-				if transceiver.Direction() == RTPTransceiverDirectionInactive {
+				fmt.Println("【方向协商】处理远程sendonly请求")
+				oldDir := transceiver.Direction()
+				if oldDir == RTPTransceiverDirectionInactive {
+					fmt.Println("  inactive → recvonly（允许接收）")
 					transceiver.setDirection(RTPTransceiverDirectionRecvonly)
 				}
+				fmt.Printf("【方向更新】%s → %s\n", oldDir, transceiver.Direction())
 			}
-
+			
 			if transceiver.Mid() == "" {
+				fmt.Printf("【MID分配】为Transceiver设置MID: %q\n", midValue)
 				if err := transceiver.SetMid(midValue); err != nil {
+					fmt.Printf("【MID错误】设置失败: %v\n", err)
 					return err
 				}
+			} else {
+				fmt.Printf("【MID检查】已存在MID: %q\n", transceiver.Mid())
 			}
+			
 		}
 	}
 
+	fmt.Println("\n=== ICE处理阶段 ===")
 	iceDetails, err := extractICEDetails(desc.parsed, pc.log)
 	if err != nil {
+		fmt.Printf("【ICE提取】ICE详细解析失败! 错误类型: %T, 详情: %v\n", err, err)
 		return err
 	}
-
+	fmt.Printf("【ICE凭证】成功提取 ICE ufrag=%q password=***%s (长度:%d)\n", 
+		iceDetails.Ufrag, iceDetails.Password[len(iceDetails.Password)-3:], len(iceDetails.Password))
+	
 	if isRenegotiation && pc.iceTransport.haveRemoteCredentialsChange(iceDetails.Ufrag, iceDetails.Password) {
-		// An ICE Restart only happens implicitly for a SetRemoteDescription of type offer
+		fmt.Println("\n【ICE重启】检测到ICE凭证变更，触发重启流程")
+		// fmt.Printf("  旧凭证: ufrag=%q password=%q\n", 
+		// 	pc.iceTransport.getRemoteUfrag(), pc.iceTransport.getRemotePassword())
+		fmt.Printf("  新凭证: ufrag=%q password=%q\n", iceDetails.Ufrag, iceDetails.Password)
+	
 		if !weOffer {
+			fmt.Println(" 执行隐式ICE重启（远程为offer方）")
 			if err = pc.iceTransport.restart(); err != nil {
+				fmt.Printf("【ICE重启失败】错误: %v\n", err)
 				return err
 			}
+			fmt.Println(" ICE传输层已成功重启")
+		} else {
+			fmt.Println(" 本地为offer方，跳过隐式重启")
 		}
-
+	
 		if err = pc.iceTransport.setRemoteCredentials(iceDetails.Ufrag, iceDetails.Password); err != nil {
+			fmt.Printf("【凭证设置失败】ufrag=%q 错误: %v\n", iceDetails.Ufrag, err)
 			return err
 		}
+		fmt.Println(" 新ICE凭证已设置")
 	}
-
+	
+	fmt.Printf("\n【候选收集】开始添加%d个远程ICE候选\n", len(iceDetails.Candidates))
 	for i := range iceDetails.Candidates {
-		if err = pc.iceTransport.AddRemoteCandidate(&iceDetails.Candidates[i]); err != nil {
+		cand := &iceDetails.Candidates[i]
+		if i < 3 { // 避免日志过多，只打印前三个
+			fmt.Printf("  候选#%02d: %s %s:%d typ %s\n", 
+				i+1, cand.Protocol, cand.Address, cand.Port, cand.Typ)
+		}
+		if err = pc.iceTransport.AddRemoteCandidate(cand); err != nil {
+			fmt.Printf("【候选添加失败】第%d个候选 %s:%d 错误: %v\n", 
+				i+1, cand.Address, cand.Port, err)
 			return err
 		}
 	}
-
+	fmt.Printf(" 成功添加%d个远程候选\n", len(iceDetails.Candidates))
+	
 	currentTransceivers := append([]*RTPTransceiver{}, pc.GetTransceivers()...)
-
+	fmt.Printf("\n【Transceiver准备】当前活跃Transceiver数量: %d\n", len(currentTransceivers))
+	
 	if isRenegotiation {
+		fmt.Println("\n=== 重新协商处理 ===")
 		if weOffer {
-			_ = setRTPTransceiverCurrentDirection(&desc, currentTransceivers, true)
+			fmt.Println(" 本地为Offer方，启动媒体流更新")
+			count := setRTPTransceiverCurrentDirection(&desc, currentTransceivers, true)
+			fmt.Printf("  已设置%d个Transceiver的当前方向\n", count)
+	
 			if err = pc.startRTPSenders(currentTransceivers); err != nil {
+				fmt.Printf("【发送器启动失败】错误: %v\n", err)
 				return err
 			}
+			fmt.Printf(" 成功启动%d个RTP发送器\n", len(currentTransceivers))
+	
 			pc.configureRTPReceivers(true, &desc, currentTransceivers)
+			fmt.Println(" 接收器配置完成")
+	
 			pc.ops.Enqueue(func() {
+				fmt.Println("【异步任务】启动RTP传输...")
 				pc.startRTP(true, &desc, currentTransceivers)
 			})
+			fmt.Println(" RTP启动任务已加入队列")
+		} else {
+			fmt.Println(" 远程为Offer方，等待后续处理")
 		}
-
 		return nil
 	}
-
+	
+	fmt.Println("\n=== ICE角色与安全配置 ===")
 	remoteIsLite := isIceLiteSet(desc.parsed)
-
+	fmt.Printf("【ICE模式】远程是否ICE Lite: %v (本地ICE Lite: %v)\n", remoteIsLite, pc.api.settingEngine.candidates.ICELite)
+	
 	fingerprint, fingerprintHash, err := extractFingerprint(desc.parsed)
 	if err != nil {
+		fmt.Printf("【证书提取】指纹解析失败! 错误类型: %T, 详情: %v\n", err, err)
 		return err
 	}
-
+	fmt.Printf("【安全指纹】算法: %s 值: %.6s... (总长:%d)\n", 
+		fingerprintHash, fingerprint, len(fingerprint))
+	
 	iceRole := ICERoleControlled
-	// If one of the agents is lite and the other one is not, the lite agent must be the controlled agent.
-	// If both or neither agents are lite the offering agent is controlling.
-	// RFC 8445 S6.1.1
+	fmt.Println("\n【角色决策】开始确定ICE角色:")
+	fmt.Printf("  本地是否为Offer方: %v\n", weOffer)
+	fmt.Printf("  双方Lite模式匹配: offer方(%v) vs 本地配置(%v)\n", 
+		remoteIsLite, pc.api.settingEngine.candidates.ICELite)
+	
+	// 根据RFC 8445 S6.1.1的复杂条件判断
 	if (weOffer && remoteIsLite == pc.api.settingEngine.candidates.ICELite) ||
 		(remoteIsLite && !pc.api.settingEngine.candidates.ICELite) {
 		iceRole = ICERoleControlling
 	}
-
-	// Start the networking in a new routine since it will block until
-	// the connection is actually established.
+	fmt.Printf("【最终角色】ICE控制角色: %s\n", iceRole)
+	
 	if weOffer {
-		_ = setRTPTransceiverCurrentDirection(&desc, currentTransceivers, true)
+		fmt.Println("\n【Offer方初始化】开始媒体流设置")
+		count := setRTPTransceiverCurrentDirection(&desc, currentTransceivers, true)
+		fmt.Printf("  Transceiver方向更新数量: %d\n", count)
+	
 		if err := pc.startRTPSenders(currentTransceivers); err != nil {
+			fmt.Printf("【发送器启动】失败! Transceiver数量: %d 错误: %v\n", 
+				len(currentTransceivers), err)
 			return err
 		}
-
+		fmt.Printf("  成功启动 %d 个RTP发送器\n", len(currentTransceivers))
+	
 		pc.configureRTPReceivers(false, &desc, currentTransceivers)
+		fmt.Println("  接收器参数配置完成")
 	}
-
+	
+	fmt.Println("\n【传输启动】加入异步执行队列")
 	pc.ops.Enqueue(func() {
+		fmt.Println("=== 异步传输启动开始 ===")
+		fmt.Printf("  ICE角色: %s\n", iceRole)
+		fmt.Printf("  DTLS角色: %s\n", dtlsRoleFromRemoteSDP(desc.parsed))
+		fmt.Printf("  ICE凭证: ufrag=%q pass=***%s\n", 
+			iceDetails.Ufrag, iceDetails.Password[len(iceDetails.Password)-3:])
+		fmt.Printf("  证书指纹: %s:%.6s...\n", fingerprintHash, fingerprint)
+	
 		pc.startTransports(
 			iceRole,
 			dtlsRoleFromRemoteSDP(desc.parsed),
@@ -1275,10 +1417,17 @@ func (pc *PeerConnection) SetRemoteDescription(desc SessionDescription) error {
 			fingerprint,
 			fingerprintHash,
 		)
+		fmt.Println("  底层传输已启动")
+	
 		if weOffer {
+			fmt.Println("【媒体流启动】开始RTP传输")
 			pc.startRTP(false, &desc, currentTransceivers)
+			fmt.Printf("  活跃Transceiver数量: %d\n", len(currentTransceivers))
 		}
+		fmt.Println("=== 异步传输完成 ===")
 	})
+	fmt.Println("  异步任务已加入处理队列")
+	
 
 	return nil
 }
