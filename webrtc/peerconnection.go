@@ -2256,44 +2256,97 @@ func (pc *PeerConnection) AddTransceiverFromKind(
 	kind RTPCodecType,
 	init ...RTPTransceiverInit,
 ) (t *RTPTransceiver, err error) {
-	if pc.isClosed.get() {
-		return nil, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
-	}
+    fmt.Printf("\n【添加收发器】开始创建 %s 类型收发器 (连接状态: %v)\n", kind, !pc.isClosed.get())
 
-	direction := RTPTransceiverDirectionSendrecv
-	if len(init) > 1 {
-		return nil, errPeerConnAddTransceiverFromKindOnlyAcceptsOne
-	} else if len(init) == 1 {
-		direction = init[0].Direction
-	}
-	switch direction {
-	case RTPTransceiverDirectionSendonly, RTPTransceiverDirectionSendrecv:
-		codecs := pc.api.mediaEngine.getCodecsByKind(kind)
-		if len(codecs) == 0 {
-			return nil, ErrNoCodecsAvailable
-		}
-		track, err := NewTrackLocalStaticSample(codecs[0].RTPCodecCapability, util.MathRandAlpha(16), util.MathRandAlpha(16))
-		if err != nil {
-			return nil, err
-		}
-		t, err = pc.newTransceiverFromTrack(direction, track, init...)
-		if err != nil {
-			return nil, err
-		}
-	case RTPTransceiverDirectionRecvonly:
-		receiver, err := pc.api.NewRTPReceiver(kind, pc.dtlsTransport)
-		if err != nil {
-			return nil, err
-		}
-		t = newRTPTransceiver(receiver, nil, RTPTransceiverDirectionRecvonly, kind, pc.api)
-	default:
-		return nil, errPeerConnAddTransceiverFromKindSupport
-	}
+    // 连接状态检查
+    if pc.isClosed.get() {
+        fmt.Printf("!! 连接已关闭，无法创建收发器\n")
+        return nil, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
+    }
+
+    // 初始化参数处理
+    direction := RTPTransceiverDirectionSendrecv
+    if len(init) > 1 {
+        fmt.Printf("!! 参数错误：最多接受1个初始化参数 (收到 %d 个)\n", len(init))
+        return nil, errPeerConnAddTransceiverFromKindOnlyAcceptsOne
+    } else if len(init) == 1 {
+        direction = init[0].Direction
+    }
+    fmt.Printf("  传输方向: %s\n", direction)
+
+    switch direction {
+    case RTPTransceiverDirectionSendonly, RTPTransceiverDirectionSendrecv:
+        fmt.Printf("┌── 发送模式配置 (%s) ──\n", direction)
+        codecs := pc.api.mediaEngine.getCodecsByKind(kind)
+        fmt.Printf("│ 可用编解码器数量: %d\n", len(codecs))
+        if len(codecs) == 0 {
+            fmt.Printf("!! 没有可用 %s 编解码器\n", kind)
+            return nil, ErrNoCodecsAvailable
+        }
+
+        // 打印前3个可用编解码器信息
+        fmt.Printf("│ 前3个可用编解码器:\n")
+        // for i, c := range codecs[:min(3, len(codecs))] {
+        //     fmt.Printf("│ %d. MIME: %s ClockRate: %d PayloadType: %d\n",
+        //         i+1, c.MimeType, c.ClockRate, c.PayloadType)
+        // }
+
+        // 创建本地轨道
+        trackID := util.MathRandAlpha(16)
+        streamID := util.MathRandAlpha(16)
+        fmt.Printf("│ 生成轨道ID: %s\n", trackID)
+        fmt.Printf("│ 生成流ID: %s\n", streamID)
+        track, err := NewTrackLocalStaticSample(
+            codecs[0].RTPCodecCapability,
+            trackID,
+            streamID,
+        )
+        if err != nil {
+            fmt.Printf("!! 轨道创建失败: %T %v\n", err, err)
+            return nil, err
+        }
+        fmt.Printf("✓ 本地轨道创建成功: %T\n", track)
+
+        // 创建收发器
+        fmt.Printf("└── 正在初始化收发器...\n")
+        t, err = pc.newTransceiverFromTrack(direction, track, init...)
+        if err != nil {
+            fmt.Printf("!! 收发器初始化失败: %v\n", err)
+            return nil, err
+        }
+
+    case RTPTransceiverDirectionRecvonly:
+        fmt.Printf("┌── 接收模式配置 ──\n")
+        fmt.Printf("│ 正在创建 %s 接收器...\n", kind)
+        receiver, err := pc.api.NewRTPReceiver(kind, pc.dtlsTransport)
+        if err != nil {
+            fmt.Printf("!! 接收器创建失败: %T %v\n", err, err)
+            return nil, err
+        }
+        fmt.Printf("✓ 接收器创建成功: %T\n", receiver)
+        t = newRTPTransceiver(receiver, nil, direction, kind, pc.api)
+        fmt.Printf("└── 接收型收发器初始化完成\n")
+
+    default:
+        fmt.Printf("!! 不支持的传输方向: %s\n", direction)
+        return nil, errPeerConnAddTransceiverFromKindSupport
+    }
+
+    // 加锁添加收发器
+    fmt.Printf("  获取连接锁...\n")
 	pc.mu.Lock()
 	pc.addRTPTransceiver(t)
 	pc.mu.Unlock()
+    beforeCount := len(pc.rtpTransceivers)
+    pc.addRTPTransceiver(t)
+    fmt.Printf("  收发器已添加 (总数: %d → %d)\n", beforeCount, len(pc.rtpTransceivers))
 
-	return t, nil
+    // 打印最终信息
+    fmt.Printf("\n✅ %s 收发器创建成功\n", kind)
+    fmt.Printf("    MID: %q\n", t.Mid())
+    fmt.Printf("    当前方向: %s\n", t.Direction())
+    fmt.Printf("    关联轨道: %T\n", t.Sender().Track())
+    return t, nil
 }
 
 // AddTransceiverFromTrack Create a new RtpTransceiver(SendRecv or SendOnly) and add it to the set of transceivers.
