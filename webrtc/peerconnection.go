@@ -1055,60 +1055,130 @@ func (pc *PeerConnection) setDescription(sd *SessionDescription, op stateChangeO
 //
 //nolint:cyclop
 func (pc *PeerConnection) SetLocalDescription(desc SessionDescription) error {
-	if pc.isClosed.get() {
-		return &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
-	}
+    fmt.Printf("\n=== 开始设置本地描述 [类型:%s] ===\n", desc.Type)
+    defer fmt.Println("=== 设置本地描述结束 ===")
 
-	haveLocalDescription := pc.currentLocalDescription != nil
+    // 检查连接状态
+    if pc.isClosed.get() {
+        fmt.Printf("!! 连接已关闭，无法设置本地描述\n")
+        return &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
+    }
+    fmt.Printf("  当前信令状态: %s\n", pc.signalingState.Get())
 
-	// JSEP 5.4
-	if desc.SDP == "" {
-		switch desc.Type {
-		case SDPTypeAnswer, SDPTypePranswer:
-			desc.SDP = pc.lastAnswer
-		case SDPTypeOffer:
-			desc.SDP = pc.lastOffer
-		default:
-			return &rtcerr.InvalidModificationError{
-				Err: fmt.Errorf("%w: %s", errPeerConnSDPTypeInvalidValueSetLocalDescription, desc.Type),
-			}
-		}
-	}
+    // 处理空SDP场景
+    if desc.SDP == "" {
+        fmt.Printf("⚠️ 收到空SDP，使用历史缓存数据\n")
+        switch desc.Type {
+        case SDPTypeAnswer, SDPTypePranswer:
+            desc.SDP = pc.lastAnswer
+            fmt.Printf("  使用上次Answer SDP（长度:%d）\n", len(pc.lastAnswer))
+        case SDPTypeOffer:
+            desc.SDP = pc.lastOffer
+            fmt.Printf("  使用上次Offer SDP（长度:%d）\n", len(pc.lastOffer))
+        default:
+            fmt.Printf("!! 无效的SDP类型: %s\n", desc.Type)
+            return &rtcerr.InvalidModificationError{
+                Err: fmt.Errorf("%w: %s", errPeerConnSDPTypeInvalidValueSetLocalDescription, desc.Type),
+            }
+        }
+    } else {
+        fmt.Printf("  收到新SDP数据（长度:%d 预览:%.40s...）\n", len(desc.SDP), desc.SDP)
+    }
 
-	desc.parsed = &sdp.SessionDescription{}
-	if err := desc.parsed.UnmarshalString(desc.SDP); err != nil {
-		return err
-	}
-	if err := pc.setDescription(&desc, stateChangeOpSetLocal); err != nil {
-		return err
-	}
+    // 解析SDP描述
+    fmt.Println("\n🔍 解析SDP内容...")
+    desc.parsed = &sdp.SessionDescription{}
+    if err := desc.parsed.UnmarshalString(desc.SDP); err != nil {
+        fmt.Printf("!! SDP解析失败 错误类型:%T\n", err)
+        fmt.Printf("!! 错误详情:%v\n", err)
+        fmt.Printf("!! 错误位置上下文:%.100q...\n", desc.SDP)
+        return err
+    }
+    fmt.Printf("✅ 解析成功 媒体块数:%d 属性数:%d\n", 
+        len(desc.parsed.MediaDescriptions), 
+        len(desc.parsed.Attributes))
 
-	currentTransceivers := append([]*RTPTransceiver{}, pc.GetTransceivers()...)
+    // 设置描述信息
+    fmt.Println("\n⚙️ 更新内部状态机...")
+    if err := pc.setDescription(&desc, stateChangeOpSetLocal); err != nil {
+        fmt.Printf("!! 状态更新失败 错误类型:%T\n", err)
+        fmt.Printf("!! 错误链:%+v\n", err)
+        return err
+    }
+    fmt.Printf("  新信令状态: %s\n", pc.signalingState.Get())
 
-	weAnswer := desc.Type == SDPTypeAnswer
-	remoteDesc := pc.RemoteDescription()
-	if weAnswer && remoteDesc != nil {
-		_ = setRTPTransceiverCurrentDirection(&desc, currentTransceivers, false)
-		if err := pc.startRTPSenders(currentTransceivers); err != nil {
-			return err
-		}
-		pc.configureRTPReceivers(haveLocalDescription, remoteDesc, currentTransceivers)
-		pc.ops.Enqueue(func() {
-			pc.startRTP(haveLocalDescription, remoteDesc, currentTransceivers)
-		})
-	}
+    // 准备Transceivers
+    currentTransceivers := append([]*RTPTransceiver{}, pc.GetTransceivers()...)
+    fmt.Printf("\n📡 当前Transceiver数:%d MID列表:%v\n", 
+        len(currentTransceivers),
+        getTransceiverMIDs(currentTransceivers))
 
-	mediaSection, ok := selectCandidateMediaSection(desc.parsed)
-	if ok {
-		pc.iceGatherer.setMediaStreamIdentification(mediaSection.SDPMid, mediaSection.SDPMLineIndex)
-	}
+    // 处理Answer场景
+    weAnswer := desc.Type == SDPTypeAnswer
+    if weAnswer {
+        fmt.Println("\n🔧 处理Answer类型描述:")
+        remoteDesc := pc.RemoteDescription()
+        if remoteDesc != nil {
+            fmt.Printf("  发现远程描述（类型:%s）开始媒体协商\n", remoteDesc.Type)
+            
+            // 设置Transceiver方向
+            count := setRTPTransceiverCurrentDirection(&desc, currentTransceivers, false)
+            fmt.Printf("  更新%d个Transceiver的方向\n", count)
 
-	if pc.iceGatherer.State() == ICEGathererStateNew {
-		return pc.iceGatherer.Gather()
-	}
+            // 启动RTP发送器
+            fmt.Printf("  启动%d个RTP发送器...\n", len(currentTransceivers))
+            if err := pc.startRTPSenders(currentTransceivers); err != nil {
+                fmt.Printf("!! 发送器启动失败 错误:%v\n", err)
+                return err
+            }
 
-	return nil
+            // 配置RTP接收器
+            fmt.Println("  配置RTP接收器参数...")
+            pc.configureRTPReceivers(pc.currentLocalDescription != nil, remoteDesc, currentTransceivers)
+
+            // 排队启动RTP
+            // fmt.Printf("  添加RTP启动任务到操作队列（当前队列长度:%d）\n", pc.ops.Len())
+            pc.ops.Enqueue(func() {
+                fmt.Println("🚀 异步启动RTP传输...")
+                pc.startRTP(pc.currentLocalDescription != nil, remoteDesc, currentTransceivers)
+            })
+        }
+    }
+
+    // 媒体流标识处理
+    fmt.Println("\n🔗 设置媒体流标识...")
+    if mediaSection, ok := selectCandidateMediaSection(desc.parsed); ok {
+        fmt.Printf("  发现媒体段标识 MID:%q MLINE索引:%d\n", 
+            mediaSection.SDPMid, 
+            mediaSection.SDPMLineIndex)
+        pc.iceGatherer.setMediaStreamIdentification(mediaSection.SDPMid, mediaSection.SDPMLineIndex)
+    } else {
+        fmt.Println("⚠️ 未找到有效的媒体段标识")
+    }
+
+    // ICE收集处理
+    fmt.Printf("\n❄️ 检查ICE收集器状态: %s\n", pc.iceGatherer.State())
+    if pc.iceGatherer.State() == ICEGathererStateNew {
+        fmt.Println("  启动ICE候选收集...")
+        if err := pc.iceGatherer.Gather(); err != nil {
+            fmt.Printf("!! ICE收集失败 错误:%v\n", err)
+            return err
+        }
+        // fmt.Printf("  ICE候选数:%d\n", len(pc.iceGatherer.GetLocalCandidates()))
+    }
+
+    return nil
 }
+
+// 辅助函数：获取Transceiver的MID列表
+func getTransceiverMIDs(transceivers []*RTPTransceiver) []string {
+    mids := make([]string, 0, len(transceivers))
+    for _, t := range transceivers {
+        mids = append(mids, t.Mid())
+    }
+    return mids
+}
+
 
 // LocalDescription returns PendingLocalDescription if it is not null and
 // otherwise it returns CurrentLocalDescription. This property is used to
@@ -2192,45 +2262,87 @@ func (pc *PeerConnection) GetTransceivers() []*RTPTransceiver {
 //
 //nolint:cyclop
 func (pc *PeerConnection) AddTrack(track TrackLocal) (*RTPSender, error) {
-	if pc.isClosed.get() {
-		return nil, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
-	}
+    fmt.Printf("\n=== 开始添加轨道 [类型:%s] ===\n", track.Kind())
+    defer fmt.Println("=== 轨道添加流程结束 ===")
 
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
-	for _, transceiver := range pc.rtpTransceivers {
-		currentDirection := transceiver.getCurrentDirection()
-		// According to https://www.w3.org/TR/webrtc/#dom-rtcpeerconnection-addtrack, if the
-		// transceiver can be reused only if it's currentDirection never be sendrecv or sendonly.
-		// But that will cause sdp inflate. So we only check currentDirection's current value,
-		// that's worked for all browsers.
-		if transceiver.kind == track.Kind() && transceiver.Sender() == nil &&
-			!(currentDirection == RTPTransceiverDirectionSendrecv || currentDirection == RTPTransceiverDirectionSendonly) {
-			sender, err := pc.api.NewRTPSender(track, pc.dtlsTransport)
-			if err == nil {
-				err = transceiver.SetSender(sender, track)
-				if err != nil {
-					_ = sender.Stop()
-					transceiver.setSender(nil)
-				}
-			}
-			if err != nil {
-				return nil, err
-			}
-			pc.onNegotiationNeeded()
+    // 检查连接状态
+    if pc.isClosed.get() {
+        fmt.Printf("!! 连接已关闭，无法添加轨道\n")
+        return nil, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
+    }
+    fmt.Printf("  当前收发器总数: %d\n", len(pc.rtpTransceivers))
 
-			return sender, nil
-		}
-	}
+    // 加锁操作
+    fmt.Println("\n🔒 获取PeerConnection锁...")
+    pc.mu.Lock()
+    defer func() {
+        pc.mu.Unlock()
+        fmt.Println("🔓 释放PeerConnection锁")
+    }()
 
-	transceiver, err := pc.newTransceiverFromTrack(RTPTransceiverDirectionSendrecv, track)
-	if err != nil {
-		return nil, err
-	}
-	pc.addRTPTransceiver(transceiver)
+    // 尝试重用现有收发器
+    fmt.Printf("\n🔍 遍历%d个收发器寻找可用项...\n", len(pc.rtpTransceivers))
+    for i, transceiver := range pc.rtpTransceivers {
+        currentDirection := transceiver.getCurrentDirection()
+        fmt.Printf("  检查收发器#%d MID:%q 类型:%s 方向:%s 发送器:%v\n",
+            i+1,
+            transceiver.Mid(),
+            transceiver.kind,
+            currentDirection,
+            transceiver.Sender() != nil)
 
-	return transceiver.Sender(), nil
+        // 验证重用条件
+        if transceiver.kind == track.Kind() &&
+            transceiver.Sender() == nil &&
+            !(currentDirection == RTPTransceiverDirectionSendrecv ||
+                currentDirection == RTPTransceiverDirectionSendonly) {
+            
+            fmt.Printf("✅ 发现可重用收发器#%d\n", i+1)
+            fmt.Printf("  创建新发送器 [轨道ID:%s]\n", track.ID())
+
+            // 创建新发送器
+            sender, err := pc.api.NewRTPSender(track, pc.dtlsTransport)
+            if err != nil {
+                fmt.Printf("!! 发送器创建失败 错误:%T %v\n", err, err)
+                return nil, err
+            }
+            // fmt.Printf("  发送器创建成功 SSRC:%d\n", sender.ssrc)
+
+            // 绑定到收发器
+            if err = transceiver.SetSender(sender, track); err != nil {
+                fmt.Printf("!! 绑定发送器失败 错误:%v\n", err)
+                _ = sender.Stop()
+                transceiver.setSender(nil)
+                return nil, err
+            }
+            fmt.Printf("  成功绑定到收发器#%d\n", i+1)
+
+            // 触发协商
+            fmt.Println("\n⚡ 触发协商需求回调")
+            pc.onNegotiationNeeded()
+
+            return sender, nil
+        }
+    }
+
+    // 创建新收发器
+    fmt.Println("\n🆕 未找到可用收发器，创建新实例...")
+    transceiver, err := pc.newTransceiverFromTrack(RTPTransceiverDirectionSendrecv, track)
+    if err != nil {
+        fmt.Printf("!! 收发器创建失败 错误:%T %v\n", err, err)
+        // fmt.Printf("!! 轨道类型:%s 编码能力:%+v\n", track.Kind(), track.Codecs())
+        return nil, err
+    }
+    fmt.Printf("✅ 新收发器创建成功 MID:%q\n", transceiver.Mid())
+
+    // 添加到连接
+    prevCount := len(pc.rtpTransceivers)
+    pc.addRTPTransceiver(transceiver)
+    fmt.Printf("  收发器列表更新 %d → %d\n", prevCount, len(pc.rtpTransceivers))
+
+    return transceiver.Sender(), nil
 }
+
 
 // RemoveTrack removes a Track from the PeerConnection.
 func (pc *PeerConnection) RemoveTrack(sender *RTPSender) (err error) {
