@@ -109,30 +109,87 @@ var (
 // |   s16  |    |    14 |    |     |    |  15 |   |    | 12 |   |   |     |   |   |    |   |    |
 // +--------+----+-------+----+-----+----+-----+---+----+----+---+---+-----+---+---+----+---+----+ .
 func (s *SessionDescription) UnmarshalString(value string) error {
-	var ok bool
-	lex := new(lexer)
-	if lex.cache, ok = unmarshalCachePool.Get().(*unmarshalCache); !ok {
-		return errSDPCacheInvalid
-	}
-	defer unmarshalCachePool.Put(lex.cache)
 
-	lex.cache.reset()
-	lex.desc = s
-	lex.value = value
+    fmt.Printf("\n【SDP解析】开始解析SDP (目标对象=%p 输入长度=%d)\n", s, len(value))
+    fmt.Printf("  输入预览: %.40s...\n", value)
 
-	for state := s1; state != nil; {
-		var err error
-		state, err = state(lex)
-		if err != nil {
-			return err
-		}
-	}
+    var ok bool
+    lex := new(lexer)
+    
+    // 从对象池获取解析缓存
+    fmt.Println("🔄 从缓存池获取解析缓存...")
+    lex.cache, ok = unmarshalCachePool.Get().(*unmarshalCache)
+    if !ok {
+        fmt.Printf("!! 缓存类型断言失败，期望类型: *unmarshalCache\n")
+        return errSDPCacheInvalid
+    }
+    // fmt.Printf("  获取缓存成功 [地址=%p 剩余容量=%d]\n", lex.cache, lex.cache.remainingCapacity())
+    defer func() {
+        unmarshalCachePool.Put(lex.cache)
+        fmt.Printf("♻️ 缓存已回收 [地址=%p]\n", lex.cache)
+    }()
 
-	s.Attributes = lex.cache.cloneSessionAttributes()
-	populateMediaAttributes(lex.cache, lex.desc)
+    // 初始化词法分析器
+    fmt.Println("\n🔄 初始化词法分析器:")
+    lex.cache.reset()
+    lex.desc = s
+    lex.value = value
+    fmt.Printf("  目标描述结构: %#v\n", s)
+    // fmt.Printf("  当前缓存状态: 行数=%d 媒体块=%d\n", lex.cache.lineNum, len(lex.cache.mediaDescriptions))
 
-	return nil
+    // 状态机处理流程
+    fmt.Println("\n🚦 启动状态机解析流程:")
+    // stateName := "s1(初始状态)"
+    for state := s1; state != nil; {
+        // fmt.Printf("  当前状态: %-12s | 剩余输入: %d字节\n", stateName, len(lex.value[lex.cache.pos:]))
+        
+        // 执行状态处理
+        nextState, err := state(lex)
+        if err != nil {
+            // fmt.Printf("\n!! 状态机错误 [状态=%s] 位置:%d 错误:%v\n", 
+            //     stateName, lex.cache.pos, err)
+            // fmt.Printf("!! 错误上下文: %q\n", errorContext(lex.value, lex.cache.pos))
+            return err
+        }
+        
+        // 更新状态名称
+        // stateName = getStateName(nextState)
+        state = nextState
+    }
+
+    // 处理解析结果
+    fmt.Println("\n✅ 解析完成，处理属性:")
+    fmt.Printf("  会话级属性数: %d\n", len(lex.cache.sessionAttributes))
+    s.Attributes = lex.cache.cloneSessionAttributes()
+    
+    // fmt.Printf("  媒体块数: %d\n", len(lex.cache.mediaDescriptions))
+    populateMediaAttributes(lex.cache, lex.desc)
+    
+    fmt.Printf("\n最终会话描述结构:\n%+v\n", s)
+    return nil
 }
+
+// 辅助函数：获取状态名称
+func getStateName(state stateFn) string {
+    switch fmt.Sprintf("%p", state) {
+    case fmt.Sprintf("%p", s1):
+        return "s1(解析版本)"
+    case fmt.Sprintf("%p", s2):
+        return "s2(解析来源)"
+    case fmt.Sprintf("%p", s3):
+        return "s3(会话名称)"
+    // 添加更多状态对应...
+    default:
+        return "未知状态"
+    }
+}
+
+// // 辅助函数：错误上下文显示
+// func errorContext(s string, pos int) string {
+//     start := max(0, pos-20)
+//     end := min(len(s), pos+20)
+//     return fmt.Sprintf("...%s▶%s...", s[start:pos], s[pos:end])
+// }
 
 // Unmarshal converts the value into a []byte and then calls UnmarshalString.
 // Callers should use the more performant UnmarshalString.
