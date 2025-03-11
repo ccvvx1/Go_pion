@@ -925,42 +925,78 @@ type sdpICEDetails struct {
 func extractICEDetails(
 	desc *sdp.SessionDescription,
 	log logging.LeveledLogger,
-) (*sdpICEDetails, error) { // nolint:gocognit
-	details := &sdpICEDetails{
-		Candidates: []ICECandidate{},
-	}
+) (*sdpICEDetails, error) { 
+    fmt.Println("=== 开始提取ICE详情 ===")
 
-	// Ufrag and Pw are allow at session level and thus have highest prio
-	if ufrag, haveUfrag := desc.Attribute("ice-ufrag"); haveUfrag {
-		details.Ufrag = ufrag
-	}
-	if pwd, havePwd := desc.Attribute("ice-pwd"); havePwd {
-		details.Password = pwd
-	}
+    // 初始化结构体
+    details := &sdpICEDetails{
+        Candidates: []ICECandidate{},
+    }
+    fmt.Printf("初始化 details 结构体: %+v\n", details)
 
-	mediaDescr, ok := selectCandidateMediaSection(desc)
-	if ok {
-		ufrag, pwd, candidates, err := extractICEDetailsFromMedia(mediaDescr, log)
-		if err != nil {
-			return nil, err
-		}
+    // 从会话级提取 ice-ufrag
+    if ufrag, haveUfrag := desc.Attribute("ice-ufrag"); haveUfrag {
+        fmt.Printf("[会话级] 找到 ice-ufrag: %q\n", ufrag)
+        details.Ufrag = ufrag
+    } else {
+        fmt.Println("[会话级] 未找到 ice-ufrag")
+    }
 
-		if details.Ufrag == "" && ufrag != "" {
-			details.Ufrag = ufrag
-			details.Password = pwd
-		}
+    // 从会话级提取 ice-pwd
+    if pwd, havePwd := desc.Attribute("ice-pwd"); havePwd {
+        fmt.Printf("[会话级] 找到 ice-pwd (长度: %d)\n", len(pwd))
+        details.Password = pwd
+    } else {
+        fmt.Println("[会话级] 未找到 ice-pwd")
+    }
 
-		details.Candidates = candidates
-	}
+    // 选择媒体块处理
+    fmt.Println("正在选择媒体块...")
+    mediaDescr, ok := selectCandidateMediaSection(desc)
+    if ok {
+        fmt.Printf("选中媒体块: \n")
+    } else {
+        fmt.Println("警告: 未找到有效媒体块")
+    }
 
-	if details.Ufrag == "" {
-		return nil, ErrSessionDescriptionMissingIceUfrag
-	} else if details.Password == "" {
-		return nil, ErrSessionDescriptionMissingIcePwd
-	}
+    if ok {
+        fmt.Println("开始解析媒体块ICE信息...")
+        ufrag, pwd, candidates, err := extractICEDetailsFromMedia(mediaDescr, log)
+        if err != nil {
+            fmt.Printf("!! 媒体块解析错误: %v\n", err)
+            return nil, err
+        }
 
-	return details, nil
+        fmt.Printf("解析到媒体级 ufrag: %q (密码长度: %d)\n", ufrag, len(pwd))
+        fmt.Printf("发现 %d 个候选地址\n", len(candidates))
+
+        if details.Ufrag == "" && ufrag != "" {
+            fmt.Printf("使用媒体级 ufrag: %q (原会话级为空)\n", ufrag)
+            details.Ufrag = ufrag
+            details.Password = pwd
+        } else {
+            fmt.Printf("保留会话级 ufrag: %q\n", details.Ufrag)
+        }
+
+        details.Candidates = candidates
+        fmt.Printf("已添加 %d 个候选到列表\n", len(details.Candidates))
+    }
+
+    // 最终验证
+    fmt.Println("\n最终验证:")
+    if details.Ufrag == "" {
+        fmt.Println("!! 错误: 缺少 ice-ufrag")
+        return nil, ErrSessionDescriptionMissingIceUfrag
+    } else if details.Password == "" {
+        fmt.Println("!! 错误: 缺少 ice-pwd")
+        return nil, ErrSessionDescriptionMissingIcePwd
+    }
+
+    fmt.Printf("验证通过: ufrag=%q, 候选数=%d\n", details.Ufrag, len(details.Candidates))
+    fmt.Println("=== ICE详情提取完成 ===")
+    return details, nil
 }
+
 
 // Select the first media section or the first bundle section
 // Currently Pion uses the first media section to gather candidates.

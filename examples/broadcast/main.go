@@ -139,12 +139,7 @@ func main() {
 		fmt.Printf("【媒体】本地轨道创建成功：%s\n", localTrack.ID())
 
 		// 发送轨道到处理通道
-		select {
-		case localTrackChan <- localTrack:
-			fmt.Println("【通道】成功发送本地轨道到处理通道")
-		default:
-			fmt.Println("【警告】本地轨道通道阻塞，丢弃轨道")
-		}
+		localTrackChan <- localTrack
 
 		// 数据转发循环
 		rtpBuf := make([]byte, 1400)
