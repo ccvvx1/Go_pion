@@ -1293,31 +1293,31 @@ func unmarshalMediaEncryptionKey(l *lexer) (stateFn, error) {
 
 // ================== 媒体属性解析 ==================
 func unmarshalMediaAttribute(l *lexer) (stateFn, error) {
-    fmt.Printf("【unmarshalMediaAttribute】进入函数，开始解析媒体属性...\n")
+    // fmt.Printf("【unmarshalMediaAttribute】进入函数，开始解析媒体属性...\n")
 
     value, err := l.readLine()
-    fmt.Printf("【unmarshalMediaAttribute】读取原始属性值: %q (长度:%d)\n", value, len(value))
+    // fmt.Printf("【unmarshalMediaAttribute】读取原始属性值: %q (长度:%d)\n", value, len(value))
     if err != nil {
         fmt.Printf("【unmarshalMediaAttribute】错误! 读取失败: %v\n", err)
         return nil, err
     }
 
     a := l.cache.getMediaAttribute()
-    fmt.Printf("【unmarshalMediaAttribute】获取属性缓存对象地址: %p\n", a)
+    // fmt.Printf("【unmarshalMediaAttribute】获取属性缓存对象地址: %p\n", a)
 
     i := strings.IndexRune(value, ':')
     if i > 0 {
         a.Key = value[:i]
         a.Value = value[i+1:]
-        fmt.Printf("【unmarshalMediaAttribute】键值分割成功 | 位置:%d 键:%q 值长度:%d\n", 
-            i, a.Key, len(a.Value))
+        // fmt.Printf("【unmarshalMediaAttribute】键值分割成功 | 位置:%d 键:%q 值长度:%d\n", 
+        //     i, a.Key, len(a.Value))
     } else {
         a.Key = value
         fmt.Printf("【unmarshalMediaAttribute】警告! 未找到分隔符，仅设置键名: %q\n", a.Key)
     }
 
     fmt.Printf("【unmarshalMediaAttribute】最终属性对象: %s=%s\n", a.Key, a.Value)
-    fmt.Printf("【unmarshalMediaAttribute】状态转移: s14\n")
+    // fmt.Printf("【unmarshalMediaAttribute】状态转移: s14\n")
     return s14, nil
 }
 
