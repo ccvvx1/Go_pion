@@ -836,54 +836,100 @@ func (pc *PeerConnection) createICETransport() *ICETransport {
 //
 //nolint:cyclop
 func (pc *PeerConnection) CreateAnswer(*AnswerOptions) (SessionDescription, error) {
-	useIdentity := pc.idpLoginURL != nil
-	remoteDesc := pc.RemoteDescription()
-	switch {
-	case remoteDesc == nil:
-		return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrNoRemoteDescription}
-	case useIdentity:
-		return SessionDescription{}, errIdentityProviderNotImplemented
-	case pc.isClosed.get():
-		return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
-	case pc.signalingState.Get() != SignalingStateHaveRemoteOffer &&
-		pc.signalingState.Get() != SignalingStateHaveLocalPranswer:
-		return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrIncorrectSignalingState}
-	}
+    fmt.Printf("\n=== 开始生成Answer SDP [连接状态:%v 信令状态:%v] ===\n", 
+        !pc.isClosed.get(), pc.signalingState.Get())
 
-	connectionRole := connectionRoleFromDtlsRole(pc.api.settingEngine.answeringDTLSRole)
-	if connectionRole == sdp.ConnectionRole(0) {
-		connectionRole = connectionRoleFromDtlsRole(defaultDtlsRoleAnswer)
+    // 前置条件检查
+    useIdentity := pc.idpLoginURL != nil
+    fmt.Printf("  身份验证检查: %v (登录URL:%v)\n", useIdentity, pc.idpLoginURL != nil)
 
-		// If one of the agents is lite and the other one is not, the lite agent must be the controlled agent.
-		// If both or neither agents are lite the offering agent is controlling.
-		// RFC 8445 S6.1.1
-		if isIceLiteSet(remoteDesc.parsed) && !pc.api.settingEngine.candidates.ICELite {
-			connectionRole = connectionRoleFromDtlsRole(DTLSRoleServer)
-		}
-	}
-	pc.mu.Lock()
-	defer pc.mu.Unlock()
+    remoteDesc := pc.RemoteDescription()
+    switch {
+    case remoteDesc == nil:
+        fmt.Printf("!! 前置条件失败: %-30s 错误码: %T\n", "无远程描述", &rtcerr.InvalidStateError{})
+        return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrNoRemoteDescription}
+    case useIdentity:
+        fmt.Printf("!! 身份验证功能未实现\n")
+        return SessionDescription{}, errIdentityProviderNotImplemented
+    case pc.isClosed.get():
+        fmt.Printf("!! 连接已关闭\n")
+        return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
+    case pc.signalingState.Get() != SignalingStateHaveRemoteOffer && 
+        pc.signalingState.Get() != SignalingStateHaveLocalPranswer:
+        fmt.Printf("!! 信令状态异常 当前:%s 期望:%s或%s\n", 
+            pc.signalingState.Get(),
+            SignalingStateHaveRemoteOffer, 
+            SignalingStateHaveLocalPranswer)
+        return SessionDescription{}, &rtcerr.InvalidStateError{Err: ErrIncorrectSignalingState}
+    }
+    fmt.Println("✅ 所有前置条件检查通过")
 
-	descr, err := pc.generateMatchedSDP(pc.rtpTransceivers, useIdentity, false /*includeUnmatched */, connectionRole)
-	if err != nil {
-		return SessionDescription{}, err
-	}
+    // 确定连接角色
+    fmt.Printf("\n🔧 确定DTLS连接角色:\n")
+    connectionRole := connectionRoleFromDtlsRole(pc.api.settingEngine.answeringDTLSRole)
+    if connectionRole == sdp.ConnectionRole(0) {
+        fmt.Println("  使用默认应答方角色")
+        connectionRole = connectionRoleFromDtlsRole(defaultDtlsRoleAnswer)
+    }
+    fmt.Printf("  初始角色: %s\n", connectionRole)
 
-	updateSDPOrigin(&pc.sdpOrigin, descr)
-	sdpBytes, err := descr.Marshal()
-	if err != nil {
-		return SessionDescription{}, err
-	}
+    // ICE Lite模式处理
+    if isIceLiteSet(remoteDesc.parsed) && !pc.api.settingEngine.candidates.ICELite {
+        fmt.Printf("!! ICE角色冲突 远端Lite:%v 本地Lite:%v\n", 
+            isIceLiteSet(remoteDesc.parsed), 
+            pc.api.settingEngine.candidates.ICELite)
+        connectionRole = connectionRoleFromDtlsRole(DTLSRoleServer)
+        fmt.Printf("  强制角色调整为: %s\n", connectionRole)
+    }
 
-	desc := SessionDescription{
-		Type:   SDPTypeAnswer,
-		SDP:    string(sdpBytes),
-		parsed: descr,
-	}
-	pc.lastAnswer = desc.SDP
+    // 加锁生成SDP
+    fmt.Printf("\n🔒 获取PeerConnection锁 (当前收发器数:%d)\n", len(pc.rtpTransceivers))
+    pc.mu.Lock()
+    defer func() {
+        pc.mu.Unlock()
+        fmt.Println("🔓 释放PeerConnection锁")
+    }()
 
-	return desc, nil
+    fmt.Println("\n🛠️ 生成匹配SDP描述...")
+    descr, err := pc.generateMatchedSDP(pc.rtpTransceivers, useIdentity, false, connectionRole)
+    if err != nil {
+        fmt.Printf("!! SDP生成失败: %T %v\n", err, err)
+        // fmt.Printf("!! 当前编解码器数: %d\n", len(pc.api.mediaEngine.GetCodecs()))
+        return SessionDescription{}, err
+    }
+    fmt.Printf("✅ SDP生成成功 媒体块数:%d\n", len(descr.MediaDescriptions))
+
+    // 更新SDP origin
+    prevOrigin := pc.sdpOrigin.String()
+    updateSDPOrigin(&pc.sdpOrigin, descr)
+    fmt.Printf("\n🔄 更新SDP Origin:\n  旧: %s\n  新: %s\n", prevOrigin, pc.sdpOrigin)
+
+    // 序列化SDP
+    fmt.Println("\n🔧 序列化SDP描述...")
+    sdpBytes, err := descr.Marshal()
+    if err != nil {
+        fmt.Printf("!! SDP序列化失败 错误类型:%T\n", err)
+        // fmt.Printf("!! 错误行号:%d 内容:%q\n", descr.UnmarshalErrors, descr.MediaDescriptions)
+        return SessionDescription{}, err
+    }
+    fmt.Printf("✅ 序列化完成 字节数:%d 内容预览:%.80s...\n", len(sdpBytes), sdpBytes)
+
+    // 构造最终描述
+    desc := SessionDescription{
+        Type:   SDPTypeAnswer,
+        SDP:    string(sdpBytes),
+        parsed: descr,
+    }
+    pc.lastAnswer = desc.SDP
+    fmt.Printf("\n=== Answer生成完成 ===\n  类型:%s\n  媒体块:%d\n  属性数:%d\n",
+        desc.Type, 
+        len(descr.MediaDescriptions),
+        len(descr.Attributes),
+    )
+
+    return desc, nil
 }
+
 
 // 4.4.1.6 Set the SessionDescription
 //
