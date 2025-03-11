@@ -141,7 +141,7 @@ func (s *SessionDescription) UnmarshalString(value string) error {
     fmt.Println("\n🚦 启动状态机解析流程:")
     // stateName := "s1(初始状态)"
     for state := s1; state != nil; {
-        // fmt.Printf("  当前状态: %-12s | 剩余输入: %d字节\n", stateName, len(lex.value[lex.cache.pos:]))
+        // fmt.Printf("  当前状态: %-12s \n", stateName)
         
         // 执行状态处理
         nextState, err := state(lex)
@@ -1054,8 +1054,55 @@ func parsePort(value string) (int, error) {
 }
 
 func populateMediaAttributes(c *unmarshalCache, s *SessionDescription) {
-	if len(s.MediaDescriptions) != 0 {
-		lastMediaDesc := s.MediaDescriptions[len(s.MediaDescriptions)-1]
-		lastMediaDesc.Attributes = c.cloneMediaAttributes()
-	}
+    fmt.Printf("\n=== 开始填充媒体属性 [会话描述地址:%p 缓存地址:%p] ===\n", s, c)
+    defer fmt.Println("=== 媒体属性填充完成 ===")
+
+    // 检查媒体描述是否存在
+    if len(s.MediaDescriptions) == 0 {
+        fmt.Println("⚠️ 警告：没有媒体描述需要处理")
+        return
+    }
+
+    // 获取最后一个媒体描述
+    lastIndex := len(s.MediaDescriptions) - 1
+    lastMediaDesc := s.MediaDescriptions[lastIndex]
+    fmt.Printf("  目标媒体描述：第 %d 个（共 %d 个媒体块）\n", lastIndex+1, len(s.MediaDescriptions))
+    fmt.Printf("  原始属性数量：%d\n", len(lastMediaDesc.Attributes))
+
+    // 克隆缓存中的属性
+    fmt.Println("\n🔧 从缓存克隆媒体属性...")
+    clonedAttrs := c.cloneMediaAttributes()
+    fmt.Printf("  克隆属性数量：%d\n", len(clonedAttrs))
+
+    // 打印前3个属性示例（避免泄露敏感信息）
+    if len(clonedAttrs) > 0 {
+        fmt.Println("  示例属性：")
+        for i, attr := range clonedAttrs[:min(len(clonedAttrs), len(clonedAttrs))] {
+            fmt.Printf("  %d.  %s : %s\n", i+1, sanitizeAttribute(attr.Key), sanitizeAttribute(attr.Value))
+        }
+    }
+
+    // 更新媒体描述属性
+    lastMediaDesc.Attributes = clonedAttrs
+    fmt.Printf("\n✅ 属性更新完成 最终属性数：%d\n", len(lastMediaDesc.Attributes))
+}
+
+// 辅助函数：敏感信息过滤
+func sanitizeAttribute(attr string) string {
+    if strings.HasPrefix(strings.ToLower(attr), "crypto:") {
+        parts := strings.Split(attr, " ")
+        if len(parts) > 2 {
+            parts[2] = "[REDACTED]"
+            return strings.Join(parts, " ")
+        }
+    }
+    return attr
+}
+
+// 辅助函数：取最小值
+func min(a, b int) int {
+    if a < b {
+        return a
+    }
+    return b
 }
