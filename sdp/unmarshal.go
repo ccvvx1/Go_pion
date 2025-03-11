@@ -1371,36 +1371,64 @@ func parseTimeUnits(value string) (num int64, err error) {
     return num, nil
 }
 
-
+// ================== 时间单位简写转换 ==================
 func timeShorthand(b byte) int64 {
-	// Some time offsets in the protocol can be provided with a shorthand
-	// notation. This code ensures to convert it to NTP timestamp format.
-	switch b {
-	case 'd': // days
-		return 86400
-	case 'h': // hours
-		return 3600
-	case 'm': // minutes
-		return 60
-	case 's': // seconds (allowed for completeness)
-		return 1
-	default:
-		return 0
-	}
+    fmt.Printf("【timeShorthand】开始转换时间单位简写: %q\n", string(b))
+    var multiplier int64
+    switch b {
+    case 'd':
+        multiplier = 86400
+        fmt.Printf("｜→ 识别到天数单位(d)，转换系数: 86400\n")
+    case 'h':
+        multiplier = 3600
+        fmt.Printf("｜→ 识别到小时单位(h)，转换系数: 3600\n")
+    case 'm':
+        multiplier = 60
+        fmt.Printf("｜→ 识别到分钟单位(m)，转换系数: 60\n")
+    case 's':
+        multiplier = 1
+        fmt.Printf("｜→ 识别到秒单位(s)，转换系数: 1\n")
+    default:
+        fmt.Printf("｜→ 警告! 未知单位符号: %q\n", string(b))
+        multiplier = 0
+    }
+    return multiplier
 }
 
+// ================== 端口解析 ==================
 func parsePort(value string) (int, error) {
-	port, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%w `%v`", errSDPInvalidPortValue, port)
-	}
+    fmt.Printf("【parsePort】开始解析端口号: %q\n", value)
+    
+    // 字符串转整数
+    port, err := strconv.Atoi(value)
+    if err != nil {
+        fmt.Printf("【parsePort】错误! 非数字格式 | 原始输入:%q 错误详情:%v\n", value, err)
+        return 0, fmt.Errorf("%w `%v`", errSDPInvalidPortValue, value)
+    }
+    fmt.Printf("｜→ 数字转换成功: %d\n", port)
 
-	if port < 0 || port > 65536 {
-		return 0, fmt.Errorf("%w -- out of range `%v`", errSDPInvalidPortValue, port)
-	}
+    // 有效性检查
+    const (
+        minPort = 0
+        maxPort = 65535
+    )
+    if port < minPort || port > maxPort {
+        fmt.Printf("【parsePort】错误! 端口越界 | 有效范围:%d-%d 当前值:%d\n", 
+            minPort, maxPort, port)
+        return 0, fmt.Errorf("%w -- out of range `%v`", errSDPInvalidPortValue, port)
+    }
 
-	return port, nil
+    // 特殊端口提示
+    if port <= 1024 {
+        fmt.Printf("｜→ 注意! 系统保留端口 (%d)\n", port)
+    } else if port == 19302 {
+        fmt.Printf("｜→ 注意! 常见 WebRTC 默认端口\n")
+    }
+
+    fmt.Printf("【parsePort】解析完成: %d\n", port)
+    return port, nil
 }
+
 
 func populateMediaAttributes(c *unmarshalCache, s *SessionDescription) {
     fmt.Printf("\n=== 开始填充媒体属性 [会话描述地址:%p 缓存地址:%p] ===\n", s, c)
