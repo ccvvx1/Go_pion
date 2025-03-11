@@ -475,553 +475,902 @@ func s16(l *lexer) (stateFn, error) {
 }
 
 func unmarshalProtocolVersion(l *lexer) (stateFn, error) {
-	version, err := l.readUint64Field()
-	if err != nil {
-		return nil, err
-	}
 
-	// As off the latest draft of the rfc this value is required to be 0.
-	// https://tools.ietf.org/html/draft-ietf-rtcweb-jsep-24#section-5.8.1
-	if version != 0 {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, version)
-	}
+    // fmt.Printf("\n=== 开始解析协议版本 (当前行:%d 列:%d) ===\n", l.lineNum, l.colNum)
+    defer fmt.Println("=== 协议版本解析结束 ===")
 
-	if err := l.nextLine(); err != nil {
-		return nil, err
-	}
+    // 读取协议版本字段
+    fmt.Printf("🔍 尝试读取版本号字段...\n")
+    version, err := l.readUint64Field()
+    if err != nil {
+        fmt.Printf("!! 版本号解析失败 | 错误类型:%T\n", err)
+        fmt.Printf("!! 错误详情:%v\n", err)
+        // fmt.Printf("!! 原始内容上下文:%q\n", errorContext(l.raw, l.pos, 20))
+        return nil, fmt.Errorf("%w: %v", errSDPInvalidValue, err)
+    }
+    fmt.Printf("✅ 读取到协议版本号: %d\n", version)
 
-	return s2, nil
+    // 验证协议版本必须为0
+    fmt.Printf("\n🔒 验证RFC规范要求版本必须为0...\n")
+    if version != 0 {
+        fmt.Printf("!! 非法协议版本 | 预期:0 实际:%d\n", version)
+        // fmt.Printf("!! 错误位置: 行%d 列%d\n", l.lineNum, l.colNum)
+        // fmt.Printf("!! 错误上下文:%q\n", errorContext(l.raw, l.pos, 40))
+        return nil, fmt.Errorf("%w `%v` ")
+    }
+
+    // 移动到下一行
+    fmt.Printf("\n⏬ 准备移动到下一行...\n")
+    if err := l.nextLine(); err != nil {
+        fmt.Printf("!! 换行操作失败 | 错误类型:%T\n", err)
+        // fmt.Printf("!! 剩余内容:%q\n", l.raw[l.pos:])
+        return nil, fmt.Errorf("换行失败: %w", err)
+    }
+    // fmt.Printf("  成功移动到行%d 新列号:%d\n", l.lineNum+1, l.colNum)
+
+    // 转移到下一个解析状态
+    fmt.Printf("\n🔄 切换到下一个解析状态: s2\n")
+    return s2, nil
 }
 
+
+
 func unmarshalOrigin(lex *lexer) (stateFn, error) {
-	var err error
+    // fmt.Printf("\n=== 开始解析Origin行 [位置 行%d:%d] ===\n", lex.lineNum, lex.colNum)
+    defer fmt.Println("=== Origin行解析结束 ===")
 
-	lex.desc.Origin.Username, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析用户名
+    fmt.Printf("🔍 读取用户名字段...\n")
+    username, err := lex.readField()
+    if err != nil {
+        fmt.Printf("!! 用户名解析失败 | 错误类型:%T\n", err)
+        // fmt.Printf("!! 错误上下文:%q\n", errorContext(lex.raw, lex.pos, 20))
+        return nil, fmt.Errorf("用户名解析失败: %w", err)
+    }
+    lex.desc.Origin.Username = username
+    fmt.Printf("✅ 用户名: %q\n", username)
 
-	lex.desc.Origin.SessionID, err = lex.readUint64Field()
-	if err != nil {
-		return nil, err
-	}
+    // 解析会话ID
+    fmt.Printf("\n🔍 读取会话ID...\n")
+    sessionID, err := lex.readUint64Field()
+    if err != nil {
+        fmt.Printf("!! 会话ID解析失败 | 错误类型:%T\n", err)
+        // fmt.Printf("!! 原始内容:%q\n", lex.currentLine())
+        return nil, fmt.Errorf("会话ID解析失败: %w", err)
+    }
+    lex.desc.Origin.SessionID = sessionID
+    fmt.Printf("✅ 会话ID: %d\n", sessionID)
 
-	lex.desc.Origin.SessionVersion, err = lex.readUint64Field()
-	if err != nil {
-		return nil, err
-	}
+    // 解析会话版本
+    fmt.Printf("\n🔍 读取会话版本...\n")
+    sessionVer, err := lex.readUint64Field()
+    if err != nil {
+        // fmt.Printf("!! 会话版本解析失败 | 错误值:%q\n", lex.currentField())
+        fmt.Printf("!! 错误详情:%v\n", err)
+        return nil, fmt.Errorf("会话版本解析失败: %w", err)
+    }
+    lex.desc.Origin.SessionVersion = sessionVer
+    fmt.Printf("✅ 会话版本: %d\n", sessionVer)
 
-	lex.desc.Origin.NetworkType, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析网络类型
+    fmt.Printf("\n🔍 读取网络类型...\n")
+    netType, err := lex.readField()
+    if err != nil {
+        fmt.Printf("!! 网络类型读取失败 | 错误位置:%d\n", lex.pos)
+        return nil, fmt.Errorf("网络类型读取失败: %w", err)
+    }
+    lex.desc.Origin.NetworkType = netType
+    fmt.Printf("✅ 网络类型: %q\n", netType)
 
-	// Set according to currently registered with IANA
-	// https://tools.ietf.org/html/rfc4566#section-8.2.6
-	if !anyOf(lex.desc.Origin.NetworkType, "IN") {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, lex.desc.Origin.NetworkType)
-	}
+    // 验证网络类型
+    fmt.Printf("\n🔒 验证网络类型(RFC4566#8.2.6)...\n")
+    if !anyOf(netType, "IN") {
+        fmt.Printf("!! 非法网络类型 | 允许值:IN 实际值:%q\n", netType)
+        // fmt.Printf("!! 错误行内容:%q\n", lex.currentLine())
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, netType)
+    }
 
-	lex.desc.Origin.AddressType, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析地址类型
+    fmt.Printf("\n🔍 读取地址类型...\n")
+    addrType, err := lex.readField()
+    if err != nil {
+        // fmt.Printf("!! 地址类型读取失败 | 剩余内容:%q\n", lex.remaining())
+        return nil, fmt.Errorf("地址类型读取失败: %w", err)
+    }
+    lex.desc.Origin.AddressType = addrType
+    fmt.Printf("✅ 地址类型: %q\n", addrType)
 
-	// Set according to currently registered with IANA
-	// https://tools.ietf.org/html/rfc4566#section-8.2.7
-	if !anyOf(lex.desc.Origin.AddressType, "IP4", "IP6") {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, lex.desc.Origin.AddressType)
-	}
+    // 验证地址类型
+    fmt.Printf("\n🔒 验证地址类型(RFC4566#8.2.7)...\n")
+    if !anyOf(addrType, "IP4", "IP6") {
+        fmt.Printf("!! 非法地址类型 | 允许值:IP4/IP6 实际值:%q\n", addrType)
+        // fmt.Printf("!! 错误上下文:%q\n", errorContext(lex.raw, lex.pos, 30))
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, addrType)
+    }
 
-	lex.desc.Origin.UnicastAddress, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析单播地址
+    fmt.Printf("\n🔍 读取单播地址...\n")
+    unicastAddr, err := lex.readField()
+    if err != nil {
+        fmt.Printf("!! 单播地址解析失败 | 错误类型:%T\n", err)
+        return nil, fmt.Errorf("单播地址解析失败: %w", err)
+    }
+    lex.desc.Origin.UnicastAddress = unicastAddr
+    fmt.Printf("✅ 单播地址: %q\n", unicastAddr)
 
-	if err := lex.nextLine(); err != nil {
-		return nil, err
-	}
+    // 移动到下一行
+    fmt.Printf("\n⏬ 准备换行...\n")
+    if err := lex.nextLine(); err != nil {
+        // fmt.Printf("!! 换行失败 | 剩余内容:%q\n", lex.remaining())
+        return nil, fmt.Errorf("换行失败: %w", err)
+    }
+    // fmt.Printf("  成功移动到行%d\n", lex.lineNum+1)
 
-	return s3, nil
+    fmt.Printf("\n🔄 切换到会话名称解析阶段(s3)\n")
+    return s3, nil
 }
 
 func unmarshalSessionName(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalSessionName】进入函数，开始解析会话名称...\n")
 
-	l.desc.SessionName = SessionName(value)
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalSessionName】读取到会话名称原始值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalSessionName】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s4, nil
+    l.desc.SessionName = SessionName(value)
+    fmt.Printf("【unmarshalSessionName】成功设置会话名称: %#v\n", l.desc.SessionName)
+
+    fmt.Printf("【unmarshalSessionName】状态转移: s4\n") // 假设 s4 是下一个状态函数名
+    return s4, nil
 }
+
 
 func unmarshalSessionInformation(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalSessionInformation】进入函数，开始解析会话附加信息...\n")
 
-	sessionInformation := Information(value)
-	l.desc.SessionInformation = &sessionInformation
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalSessionInformation】读取到信息原始值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalSessionInformation】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s7, nil
+    sessionInformation := Information(value)
+    fmt.Printf("【unmarshalSessionInformation】创建 Information 对象: %#v\n", sessionInformation)
+
+    l.desc.SessionInformation = &sessionInformation
+    fmt.Printf("【unmarshalSessionInformation】成功设置指针: %p -> 内容:%#v\n", l.desc.SessionInformation, *l.desc.SessionInformation)
+
+    fmt.Printf("【unmarshalSessionInformation】状态转移: s7\n")
+    return s7, nil
 }
 
+// ================== URI 解析 ==================
 func unmarshalURI(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalURI】进入函数，开始解析URI...\n")
 
-	l.desc.URI, err = url.Parse(value)
-	if err != nil {
-		return nil, err
-	}
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalURI】读取到URI原始值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalURI】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s10, nil
+    l.desc.URI, err = url.Parse(value)
+    if err != nil {
+        fmt.Printf("【unmarshalURI】错误! URI格式无效: %v | 输入值:%#v\n", err, value)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalURI】成功解析URI结构: Scheme:%q Host:%q Path:%q\n", 
+        l.desc.URI.Scheme, l.desc.URI.Host, l.desc.URI.Path)
+
+    fmt.Printf("【unmarshalURI】状态转移: s10\n")
+    return s10, nil
 }
 
+// ================== 邮箱解析 ==================
 func unmarshalEmail(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalEmail】进入函数，开始解析电子邮件地址...\n")
 
-	emailAddress := EmailAddress(value)
-	l.desc.EmailAddress = &emailAddress
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalEmail】读取到邮箱原始值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalEmail】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s6, nil
+    emailAddress := EmailAddress(value)
+    fmt.Printf("【unmarshalEmail】创建 EmailAddress 对象: %#v\n", emailAddress)
+
+    l.desc.EmailAddress = &emailAddress
+    fmt.Printf("【unmarshalEmail】成功设置指针: %p -> 内容:%#v\n", l.desc.EmailAddress, *l.desc.EmailAddress)
+
+    fmt.Printf("【unmarshalEmail】状态转移: s6\n")
+    return s6, nil
 }
 
+// ================== 电话解析 ==================
 func unmarshalPhone(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalPhone】进入函数，开始解析电话号码...\n")
 
-	phoneNumber := PhoneNumber(value)
-	l.desc.PhoneNumber = &phoneNumber
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalPhone】读取到电话原始值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalPhone】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s8, nil
+    phoneNumber := PhoneNumber(value)
+    fmt.Printf("【unmarshalPhone】创建 PhoneNumber 对象: %#v\n", phoneNumber)
+
+    l.desc.PhoneNumber = &phoneNumber
+    fmt.Printf("【unmarshalPhone】成功设置指针: %p -> 内容:%#v\n", l.desc.PhoneNumber, *l.desc.PhoneNumber)
+
+    fmt.Printf("【unmarshalPhone】状态转移: s8\n")
+    return s8, nil
 }
-
+// ================== 会话连接信息解析 ==================
 func unmarshalSessionConnectionInformation(l *lexer) (stateFn, error) {
-	var err error
-	l.desc.ConnectionInformation, err = l.unmarshalConnectionInformation()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalSessionConnectionInformation】进入函数，开始解析会话连接信息...\n")
 
-	return s5, nil
+    connInfo, err := l.unmarshalConnectionInformation()
+    if err != nil {
+        fmt.Printf("【unmarshalSessionConnectionInformation】错误! 连接信息解析失败: %v\n", err)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalSessionConnectionInformation】成功获取连接信息对象: %+v\n", *connInfo)
+
+    l.desc.ConnectionInformation = connInfo
+    fmt.Printf("【unmarshalSessionConnectionInformation】已存储连接信息指针: %p\n", connInfo)
+
+    fmt.Printf("【unmarshalSessionConnectionInformation】状态转移: s5\n")
+    return s5, nil
 }
 
+// ================== 连接信息详细解析 ==================
 func (l *lexer) unmarshalConnectionInformation() (*ConnectionInformation, error) {
-	var err error
-	var connInfo ConnectionInformation
+    fmt.Printf("【unmarshalConnectionInformation】开始解析连接信息字段...\n")
+    var connInfo ConnectionInformation
 
-	connInfo.NetworkType, err = l.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析网络类型
+    networkType, err := l.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalConnectionInformation】错误! 读取NetworkType失败: %v\n", err)
+        return nil, err
+    }
+    connInfo.NetworkType = networkType
+    fmt.Printf("【unmarshalConnectionInformation】读取NetworkType: %q\n", networkType)
 
-	// Set according to currently registered with IANA
-	// https://tools.ietf.org/html/rfc4566#section-8.2.6
-	if !anyOf(connInfo.NetworkType, "IN") {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, connInfo.NetworkType)
-	}
+    // 验证网络类型 (RFC4566 8.2.6)
+    if !anyOf(networkType, "IN") {
+        fmt.Printf("【unmarshalConnectionInformation】错误! 无效网络类型 (需为IN): %q\n", networkType)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, networkType)
+    }
 
-	connInfo.AddressType, err = l.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析地址类型
+    addrType, err := l.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalConnectionInformation】错误! 读取AddressType失败: %v\n", err)
+        return nil, err
+    }
+    connInfo.AddressType = addrType
+    fmt.Printf("【unmarshalConnectionInformation】读取AddressType: %q\n", addrType)
 
-	// Set according to currently registered with IANA
-	// https://tools.ietf.org/html/rfc4566#section-8.2.7
-	if !anyOf(connInfo.AddressType, "IP4", "IP6") {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, connInfo.AddressType)
-	}
+    // 验证地址类型 (RFC4566 8.2.7)
+    validAddrTypes := []string{"IP4", "IP6"}
+    if !anyOf(addrType, validAddrTypes...) {
+        fmt.Printf("【unmarshalConnectionInformation】错误! 无效地址类型 (需为IP4/IP6): %q\n", addrType)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, addrType)
+    }
 
-	address, err := l.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析地址
+    address, err := l.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalConnectionInformation】错误! 读取Address失败: %v\n", err)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalConnectionInformation】读取原始地址值: %q\n", address)
 
-	if address != "" {
-		connInfo.Address = new(Address)
-		connInfo.Address.Address = address
-	}
+    if address != "" {
+        connInfo.Address = &Address{Address: address}
+        fmt.Printf("【unmarshalConnectionInformation】创建地址对象: %#v\n", *connInfo.Address)
+    } else {
+        fmt.Printf("【unmarshalConnectionInformation】警告! 地址字段为空\n")
+    }
 
-	if err := l.nextLine(); err != nil {
-		return nil, err
-	}
+    // 推进到下一行
+    if err := l.nextLine(); err != nil {
+        fmt.Printf("【unmarshalConnectionInformation】错误! 换行失败: %v\n", err)
+        return nil, err
+    }
 
-	return &connInfo, nil
+    fmt.Printf("【unmarshalConnectionInformation】连接信息完整解析: %+v\n", connInfo)
+    return &connInfo, nil
 }
 
+// ================== 会话带宽解析 ==================
 func unmarshalSessionBandwidth(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalSessionBandwidth】进入函数，开始解析带宽信息...\n")
 
-	bandwidth, err := unmarshalBandwidth(value)
-	if err != nil {
-		return nil, fmt.Errorf("%w `b=%v`", errSDPInvalidValue, value)
-	}
-	l.desc.Bandwidth = append(l.desc.Bandwidth, *bandwidth)
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalSessionBandwidth】读取原始带宽值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalSessionBandwidth】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s5, nil
+    bandwidth, err := unmarshalBandwidth(value)
+    if err != nil {
+        fmt.Printf("【unmarshalSessionBandwidth】错误! 格式无效: %v | 原始输入:%#v\n", err, value)
+        return nil, fmt.Errorf("%w `b=%v`", errSDPInvalidValue, value)
+    }
+    fmt.Printf("【unmarshalSessionBandwidth】解析成功: 类型=%s 实验性=%t 带宽值=%d\n", 
+        bandwidth.Type, bandwidth.Experimental, bandwidth.Bandwidth)
+
+    l.desc.Bandwidth = append(l.desc.Bandwidth, *bandwidth)
+    fmt.Printf("【unmarshalSessionBandwidth】已添加到带宽列表 (当前长度:%d)\n", len(l.desc.Bandwidth))
+
+    fmt.Printf("【unmarshalSessionBandwidth】状态转移: s5\n")
+    return s5, nil
 }
 
+// ================== 带宽详细解析 ==================
 func unmarshalBandwidth(value string) (*Bandwidth, error) {
-	parts := strings.Split(value, ":")
-	if len(parts) != 2 {
-		return nil, fmt.Errorf("%w `b=%v`", errSDPInvalidValue, parts)
-	}
+    fmt.Printf("【unmarshalBandwidth】开始解析带宽字段: %q\n", value)
 
-	experimental := strings.HasPrefix(parts[0], "X-")
-	if experimental {
-		parts[0] = strings.TrimPrefix(parts[0], "X-")
-	} else if !anyOf(parts[0], "CT", "AS", "TIAS", "RS", "RR") {
-		// Set according to currently registered with IANA
-		// https://tools.ietf.org/html/rfc4566#section-5.8
-		// https://tools.ietf.org/html/rfc3890#section-6.2
-		// https://tools.ietf.org/html/rfc3556#section-2
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, parts[0])
-	}
+    parts := strings.Split(value, ":")
+    fmt.Printf("【unmarshalBandwidth】分割结果: %#v (段数:%d)\n", parts, len(parts))
+    if len(parts) != 2 {
+        fmt.Printf("【unmarshalBandwidth】错误! 需要2个字段，实际得到%d个\n", len(parts))
+        return nil, fmt.Errorf("%w `b=%v`", errSDPInvalidValue, parts)
+    }
 
-	bandwidth, err := strconv.ParseUint(parts[1], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidNumericValue, parts[1])
-	}
+    experimental := strings.HasPrefix(parts[0], "X-")
+    if experimental {
+        fmt.Printf("【unmarshalBandwidth】检测到实验性类型: %q\n", parts[0])
+        parts[0] = strings.TrimPrefix(parts[0], "X-")
+        fmt.Printf("【unmarshalBandwidth】标准化类型名称: %q\n", parts[0])
+    }
 
-	return &Bandwidth{
-		Experimental: experimental,
-		Type:         parts[0],
-		Bandwidth:    bandwidth,
-	}, nil
+    validTypes := []string{"CT", "AS", "TIAS", "RS", "RR"}
+    fmt.Printf("【unmarshalBandwidth】验证类型有效性 (RFC4566/5.8)...\n")
+    if !experimental && !anyOf(parts[0], validTypes...) {
+        fmt.Printf("【unmarshalBandwidth】错误! 无效类型: %q 有效值:%v\n", parts[0], validTypes)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, parts[0])
+    }
+
+    fmt.Printf("【unmarshalBandwidth】转换带宽数值: %q -> uint64\n", parts[1])
+    bandwidth, err := strconv.ParseUint(parts[1], 10, 64)
+    if err != nil {
+        fmt.Printf("【unmarshalBandwidth】错误! 数值转换失败: %v | 原始值:%q\n", err, parts[1])
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidNumericValue, parts[1])
+    }
+
+    result := &Bandwidth{
+        Experimental: experimental,
+        Type:         parts[0],
+        Bandwidth:    bandwidth,
+    }
+    fmt.Printf("【unmarshalBandwidth】生成带宽对象: %+v\n", *result)
+    return result, nil
 }
 
+// ================== 时间描述解析 ==================
 func unmarshalTiming(lex *lexer) (stateFn, error) {
-	var err error
-	var td TimeDescription
+    fmt.Printf("【unmarshalTiming】进入函数，开始解析时间范围...\n")
+    var td TimeDescription
 
-	td.Timing.StartTime, err = lex.readUint64Field()
-	if err != nil {
-		return nil, err
-	}
+    // 解析起始时间
+    startTime, err := lex.readUint64Field()
+    if err != nil {
+        fmt.Printf("【unmarshalTiming】错误! 读取起始时间失败: %v\n", err)
+        return nil, err
+    }
+    td.Timing.StartTime = startTime
+    fmt.Printf("【unmarshalTiming】读取起始时间: %d (0x%x)\n", startTime, startTime)
 
-	td.Timing.StopTime, err = lex.readUint64Field()
-	if err != nil {
-		return nil, err
-	}
+    // 解析结束时间
+    stopTime, err := lex.readUint64Field()
+    if err != nil {
+        fmt.Printf("【unmarshalTiming】错误! 读取结束时间失败: %v\n", err)
+        return nil, err
+    }
+    td.Timing.StopTime = stopTime
+    fmt.Printf("【unmarshalTiming】读取结束时间: %d (差值:%d)\n", stopTime, stopTime-startTime)
 
-	if err := lex.nextLine(); err != nil {
-		return nil, err
-	}
+    // 换行处理
+    if err := lex.nextLine(); err != nil {
+        fmt.Printf("【unmarshalTiming】错误! 换行失败: %v\n", err)
+        return nil, err
+    }
 
-	lex.desc.TimeDescriptions = append(lex.desc.TimeDescriptions, td)
-
-	return s9, nil
+    lex.desc.TimeDescriptions = append(lex.desc.TimeDescriptions, td)
+    fmt.Printf("【unmarshalTiming】成功添加时间描述项 (当前总数:%d)\n", len(lex.desc.TimeDescriptions))
+    
+    fmt.Printf("【unmarshalTiming】状态转移: s9\n")
+    return s9, nil
 }
 
+// ================== 周期时间解析 ==================
 func unmarshalRepeatTimes(lex *lexer) (stateFn, error) {
-	var err error
-	var newRepeatTime RepeatTime
+    fmt.Printf("【unmarshalRepeatTimes】进入函数，开始解析周期时间规则...\n")
+    var newRepeatTime RepeatTime
 
-	latestTimeDesc := &lex.desc.TimeDescriptions[len(lex.desc.TimeDescriptions)-1]
+    // 获取最新时间描述
+    if len(lex.desc.TimeDescriptions) == 0 {
+        fmt.Printf("【unmarshalRepeatTimes】错误! 时间描述列表为空\n")
+        return nil, fmt.Errorf("missing time description")
+    }
+    latestTimeDesc := &lex.desc.TimeDescriptions[len(lex.desc.TimeDescriptions)-1]
+    fmt.Printf("【unmarshalRepeatTimes】关联到最新时间描述项 (索引:%d)\n", len(lex.desc.TimeDescriptions)-1)
 
-	field, err := lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析间隔时间
+    intervalField, err := lex.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalRepeatTimes】错误! 读取间隔时间失败: %v\n", err)
+        return nil, err
+    }
+    interval, err := parseTimeUnits(intervalField)
+    if err != nil {
+        fmt.Printf("【unmarshalRepeatTimes】错误! 间隔时间格式无效: %q | 错误: %v\n", intervalField, err)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, intervalField)
+    }
+    newRepeatTime.Interval = interval
+    fmt.Printf("【unmarshalRepeatTimes】解析间隔时间: %q -> %d units\n", intervalField, interval)
 
-	newRepeatTime.Interval, err = parseTimeUnits(field)
-	if err != nil {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, field)
-	}
+    // 解析持续时间
+    durationField, err := lex.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalRepeatTimes】错误! 读取持续时间失败: %v\n", err)
+        return nil, err
+    }
+    duration, err := parseTimeUnits(durationField)
+    if err != nil {
+        fmt.Printf("【unmarshalRepeatTimes】错误! 持续时间格式无效: %q | 错误: %v\n", durationField, err)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, durationField)
+    }
+    newRepeatTime.Duration = duration
+    fmt.Printf("【unmarshalRepeatTimes】解析持续时间: %q -> %d units\n", durationField, duration)
 
-	field, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析偏移量列表
+    fmt.Printf("【unmarshalRepeatTimes】开始解析偏移量...\n")
+    offsetCount := 0
+    for {
+        field, err := lex.readField()
+        if err != nil {
+            fmt.Printf("【unmarshalRepeatTimes】错误! 读取偏移量失败: %v\n", err)
+            return nil, err
+        }
+        if field == "" {
+            fmt.Printf("【unmarshalRepeatTimes】偏移量解析完成 (总数:%d)\n", offsetCount)
+            break
+        }
 
-	newRepeatTime.Duration, err = parseTimeUnits(field)
-	if err != nil {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, field)
-	}
+        offset, err := parseTimeUnits(field)
+        if err != nil {
+            fmt.Printf("【unmarshalRepeatTimes】错误! 偏移量格式无效: %q | 错误: %v\n", field, err)
+            return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, field)
+        }
+        newRepeatTime.Offsets = append(newRepeatTime.Offsets, offset)
+        offsetCount++
+        fmt.Printf("【unmarshalRepeatTimes】[偏移量%d] %q -> %d units\n", offsetCount, field, offset)
+    }
 
-	for {
-		field, err := lex.readField()
-		if err != nil {
-			return nil, err
-		}
-		if field == "" {
-			break
-		}
-		offset, err := parseTimeUnits(field)
-		if err != nil {
-			return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, field)
-		}
-		newRepeatTime.Offsets = append(newRepeatTime.Offsets, offset)
-	}
+    // 换行处理
+    if err := lex.nextLine(); err != nil {
+        fmt.Printf("【unmarshalRepeatTimes】错误! 换行失败: %v\n", err)
+        return nil, err
+    }
 
-	if err := lex.nextLine(); err != nil {
-		return nil, err
-	}
-
-	latestTimeDesc.RepeatTimes = append(latestTimeDesc.RepeatTimes, newRepeatTime)
-
-	return s9, nil
+    latestTimeDesc.RepeatTimes = append(latestTimeDesc.RepeatTimes, newRepeatTime)
+    fmt.Printf("【unmarshalRepeatTimes】成功添加周期规则 (当前规则数:%d)\n", len(latestTimeDesc.RepeatTimes))
+    
+    fmt.Printf("【unmarshalRepeatTimes】状态转移: s9\n")
+    return s9, nil
 }
 
+// ================== 时区解析 ==================
 func unmarshalTimeZones(lex *lexer) (stateFn, error) {
-	// These fields are transimitted in pairs
-	// z=<adjustment time> <offset> <adjustment time> <offset> ....
-	// so we are making sure that there are actually multiple of 2 total.
-	for {
-		var err error
-		var timeZone TimeZone
+    fmt.Printf("【unmarshalTimeZones】进入函数，开始解析时区调整规则...\n")
+    pairCount := 0
 
-		timeZone.AdjustmentTime, err = lex.readUint64Field()
-		if err != nil {
-			return nil, err
-		}
+    for {
+        var timeZone TimeZone
+        fmt.Printf("【unmarshalTimeZones】解析第 %d 组时区规则\n", pairCount+1)
 
-		offset, err := lex.readField()
-		if err != nil {
-			return nil, err
-		}
+        // 读取调整时间
+        adjTime, err := lex.readUint64Field()
+        if err != nil {
+            fmt.Printf("【unmarshalTimeZones】错误! 读取调整时间失败: %v\n", err)
+            return nil, err
+        }
+        timeZone.AdjustmentTime = adjTime
+        fmt.Printf("【unmarshalTimeZones】[组%d] 调整时间: %d (0x%x)\n", pairCount+1, adjTime, adjTime)
 
-		if offset == "" {
-			break
-		}
+        // 读取偏移量
+        offsetStr, err := lex.readField()
+        if err != nil {
+            fmt.Printf("【unmarshalTimeZones】错误! 读取偏移量失败: %v\n", err)
+            return nil, err
+        }
+        if offsetStr == "" {
+            fmt.Printf("【unmarshalTimeZones】检测到空偏移量，终止解析 (已解析组数:%d)\n", pairCount)
+            break
+        }
 
-		timeZone.Offset, err = parseTimeUnits(offset)
-		if err != nil {
-			return nil, err
-		}
+        // 解析偏移量
+        offset, err := parseTimeUnits(offsetStr)
+        if err != nil {
+            fmt.Printf("【unmarshalTimeZones】错误! 偏移量格式无效: %q | 错误: %v\n", offsetStr, err)
+            return nil, err
+        }
+        timeZone.Offset = offset
+        fmt.Printf("【unmarshalTimeZones】[组%d] 解析偏移量: %q -> %d 单位\n", pairCount+1, offsetStr, offset)
 
-		lex.desc.TimeZones = append(lex.desc.TimeZones, timeZone)
-	}
+        lex.desc.TimeZones = append(lex.desc.TimeZones, timeZone)
+        pairCount++
+    }
 
-	if err := lex.nextLine(); err != nil {
-		return nil, err
-	}
+    if err := lex.nextLine(); err != nil {
+        fmt.Printf("【unmarshalTimeZones】错误! 换行失败: %v\n", err)
+        return nil, err
+    }
 
-	return s13, nil
+    fmt.Printf("【unmarshalTimeZones】成功添加 %d 组时区规则\n", pairCount)
+    fmt.Printf("【unmarshalTimeZones】状态转移: s13\n")
+    return s13, nil
 }
 
+// ================== 加密密钥解析 ==================
 func unmarshalSessionEncryptionKey(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalSessionEncryptionKey】进入函数，开始解析加密密钥...\n")
 
-	encryptionKey := EncryptionKey(value)
-	l.desc.EncryptionKey = &encryptionKey
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalSessionEncryptionKey】读取原始密钥值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalSessionEncryptionKey】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s11, nil
+    encryptionKey := EncryptionKey(value)
+    l.desc.EncryptionKey = &encryptionKey
+    fmt.Printf("【unmarshalSessionEncryptionKey】设置密钥指针: %p -> %#v\n", 
+        l.desc.EncryptionKey, *l.desc.EncryptionKey)
+
+    fmt.Printf("【unmarshalSessionEncryptionKey】状态转移: s11\n")
+    return s11, nil
 }
 
+// ================== 会话属性解析 ==================
 func unmarshalSessionAttribute(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalSessionAttribute】进入函数，开始解析会话属性...\n")
 
-	i := strings.IndexRune(value, ':')
-	a := l.cache.getSessionAttribute()
-	if i > 0 {
-		a.Key = value[:i]
-		a.Value = value[i+1:]
-	} else {
-		a.Key = value
-	}
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalSessionAttribute】读取原始属性值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalSessionAttribute】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s11, nil
+    a := l.cache.getSessionAttribute()
+    fmt.Printf("【unmarshalSessionAttribute】获取属性对象缓存地址: %p\n", a)
+
+    i := strings.IndexRune(value, ':')
+    if i > 0 {
+        a.Key = value[:i]
+        a.Value = value[i+1:]
+        fmt.Printf("【unmarshalSessionAttribute】分割键值对成功 | 键:%q 值:%q\n", a.Key, a.Value)
+    } else {
+        a.Key = value
+        fmt.Printf("【unmarshalSessionAttribute】警告! 未找到分隔符，仅设置键名: %q\n", a.Key)
+    }
+
+    fmt.Printf("【unmarshalSessionAttribute】最终属性对象: %+v\n", *a)
+    fmt.Printf("【unmarshalSessionAttribute】状态转移: s11\n")
+    return s11, nil
 }
 
 func unmarshalMediaDescription(lex *lexer) (stateFn, error) { //nolint:cyclop
-	populateMediaAttributes(lex.cache, lex.desc)
-	var newMediaDesc MediaDescription
+    fmt.Printf("【unmarshalMediaDescription】进入函数，开始解析媒体描述...\n")
+    populateMediaAttributes(lex.cache, lex.desc)
+    var newMediaDesc MediaDescription
 
-	// <media>
-	field, err := lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    // 解析媒体类型
+    mediaType, err := lex.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalMediaDescription】错误! 读取媒体类型失败: %v\n", err)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalMediaDescription】读取媒体类型: %q\n", mediaType)
 
-	// Set according to currently registered with IANA
-	// https://tools.ietf.org/html/rfc4566#section-5.14
-	if !anyOf(field, "audio", "video", "text", "application", "message") {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, field)
-	}
-	newMediaDesc.MediaName.Media = field
+    // 验证IANA注册类型 (RFC4566 5.14)
+    validMediaTypes := []string{"audio", "video", "text", "application", "message"}
+    if !anyOf(mediaType, validMediaTypes...) {
+        fmt.Printf("【unmarshalMediaDescription】错误! 无效媒体类型 (有效值:%v): %q\n", validMediaTypes, mediaType)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, mediaType)
+    }
+    newMediaDesc.MediaName.Media = mediaType
+    fmt.Printf("【unmarshalMediaDescription】设置媒体类型: %s\n", mediaType)
 
-	// <port>
-	field, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
-	parts := strings.Split(field, "/")
-	newMediaDesc.MediaName.Port.Value, err = parsePort(parts[0])
-	if err != nil {
-		return nil, fmt.Errorf("%w `%v`", errSDPInvalidPortValue, parts[0])
-	}
+    // 解析端口信息
+    portField, err := lex.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalMediaDescription】错误! 读取端口字段失败: %v\n", err)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalMediaDescription】原始端口字段: %q\n", portField)
 
-	if len(parts) > 1 {
-		var portRange int
-		portRange, err = strconv.Atoi(parts[1])
-		if err != nil {
-			return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, parts)
-		}
-		newMediaDesc.MediaName.Port.Range = &portRange
-	}
+    portParts := strings.Split(portField, "/")
+    fmt.Printf("【unmarshalMediaDescription】分割端口字段: %#v (段数:%d)\n", portParts, len(portParts))
 
-	// <proto>
-	field, err = lex.readField()
-	if err != nil {
-		return nil, err
-	}
+    basePort, err := parsePort(portParts[0])
+    if err != nil {
+        fmt.Printf("【unmarshalMediaDescription】错误! 端口号无效: %q | 错误: %v\n", portParts[0], err)
+        return nil, fmt.Errorf("%w `%v`", errSDPInvalidPortValue, portParts[0])
+    }
+    newMediaDesc.MediaName.Port.Value = basePort
+    fmt.Printf("【unmarshalMediaDescription】解析基础端口: %d\n", basePort)
 
-	// Set according to currently registered with IANA
-	// https://tools.ietf.org/html/rfc4566#section-5.14
-	// https://tools.ietf.org/html/rfc4975#section-8.1
-	for _, proto := range strings.Split(field, "/") {
-		if !anyOf(
-			proto,
-			"UDP",
-			"RTP",
-			"AVP",
-			"SAVP",
-			"SAVPF",
-			"TLS",
-			"DTLS",
-			"SCTP",
-			"AVPF",
-			"TCP",
-			"MSRP",
-			"BFCP",
-			"UDT",
-			"IX",
-			"MRCPv2",
-		) {
-			return nil, fmt.Errorf("%w `%v`", errSDPInvalidNumericValue, field)
-		}
-		newMediaDesc.MediaName.Protos = append(newMediaDesc.MediaName.Protos, proto)
-	}
+    if len(portParts) > 1 {
+        portRange, err := strconv.Atoi(portParts[1])
+        if err != nil {
+            fmt.Printf("【unmarshalMediaDescription】错误! 端口范围无效: %q | 错误: %v\n", portParts[1], err)
+            return nil, fmt.Errorf("%w `%v`", errSDPInvalidValue, portParts)
+        }
+        newMediaDesc.MediaName.Port.Range = &portRange
+        fmt.Printf("【unmarshalMediaDescription】设置端口范围: %d\n", portRange)
+    }
 
-	// <fmt>...
-	for {
-		field, err = lex.readField()
-		if err != nil {
-			return nil, err
-		}
-		if field == "" {
-			break
-		}
-		newMediaDesc.MediaName.Formats = append(newMediaDesc.MediaName.Formats, field)
-	}
+    // 解析协议栈
+    protoField, err := lex.readField()
+    if err != nil {
+        fmt.Printf("【unmarshalMediaDescription】错误! 读取协议字段失败: %v\n", err)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalMediaDescription】原始协议字段: %q\n", protoField)
 
-	if err := lex.nextLine(); err != nil {
-		return nil, err
-	}
+    protoList := strings.Split(protoField, "/")
+    validProtos := []string{"UDP", "RTP", "AVP", "SAVP", "SAVPF", "TLS", "DTLS", "SCTP", "AVPF", "TCP", "MSRP", "BFCP", "UDT", "IX", "MRCPv2"}
+    fmt.Printf("【unmarshalMediaDescription】开始协议验证 (RFC4566 5.14)...\n")
+    for i, proto := range protoList {
+        if !anyOf(proto, validProtos...) {
+            fmt.Printf("【unmarshalMediaDescription】错误! 第%d个协议无效 (有效值:%v): %q\n", i+1, validProtos, proto)
+            return nil, fmt.Errorf("%w `%v`", errSDPInvalidNumericValue, protoField)
+        }
+        newMediaDesc.MediaName.Protos = append(newMediaDesc.MediaName.Protos, proto)
+        fmt.Printf("【unmarshalMediaDescription】添加协议[%d]: %s\n", i+1, proto)
+    }
 
-	lex.desc.MediaDescriptions = append(lex.desc.MediaDescriptions, &newMediaDesc)
+    // 解析媒体格式
+    fmt.Printf("【unmarshalMediaDescription】开始解析格式字段...\n")
+    formatCount := 0
+    for {
+        format, err := lex.readField()
+        if err != nil {
+            fmt.Printf("【unmarshalMediaDescription】错误! 读取格式字段失败: %v\n", err)
+            return nil, err
+        }
+        if format == "" {
+            fmt.Printf("【unmarshalMediaDescription】格式字段解析完成 (总数:%d)\n", formatCount)
+            break
+        }
+        newMediaDesc.MediaName.Formats = append(newMediaDesc.MediaName.Formats, format)
+        formatCount++
+        fmt.Printf("【unmarshalMediaDescription】添加格式[%d]: %q\n", formatCount, format)
+    }
 
-	return s12, nil
+    if err := lex.nextLine(); err != nil {
+        fmt.Printf("【unmarshalMediaDescription】错误! 换行失败: %v\n", err)
+        return nil, err
+    }
+
+    lex.desc.MediaDescriptions = append(lex.desc.MediaDescriptions, &newMediaDesc)
+    fmt.Printf("【unmarshalMediaDescription】成功添加媒体描述 (当前总数:%d)\n", len(lex.desc.MediaDescriptions))
+    
+    fmt.Printf("【unmarshalMediaDescription】状态转移: s12\n")
+    return s12, nil
 }
 
+// ================== 媒体标题解析 ==================
 func unmarshalMediaTitle(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalMediaTitle】进入函数，开始解析媒体标题...\n")
 
-	latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
-	mediaTitle := Information(value)
-	latestMediaDesc.MediaTitle = &mediaTitle
+    // 安全获取最新媒体描述
+    if len(l.desc.MediaDescriptions) == 0 {
+        fmt.Printf("【unmarshalMediaTitle】错误! 媒体描述列表为空\n")
+        return nil, fmt.Errorf("no media description available")
+    }
+    latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
+    fmt.Printf("【unmarshalMediaTitle】关联到最新媒体描述 (索引:%d)\n", len(l.desc.MediaDescriptions)-1)
 
-	return s16, nil
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalMediaTitle】读取原始标题值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalMediaTitle】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
+
+    mediaTitle := Information(value)
+    latestMediaDesc.MediaTitle = &mediaTitle
+    fmt.Printf("【unmarshalMediaTitle】设置媒体标题指针: %p -> %#v\n", 
+        latestMediaDesc.MediaTitle, *latestMediaDesc.MediaTitle)
+
+    fmt.Printf("【unmarshalMediaTitle】状态转移: s16\n")
+    return s16, nil
 }
 
+// ================== 媒体连接信息解析 ==================
 func unmarshalMediaConnectionInformation(l *lexer) (stateFn, error) {
-	var err error
-	latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
-	latestMediaDesc.ConnectionInformation, err = l.unmarshalConnectionInformation()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalMediaConnectionInformation】进入函数，开始解析媒体级连接信息...\n")
 
-	return s15, nil
+    // 安全获取最新媒体描述
+    if len(l.desc.MediaDescriptions) == 0 {
+        fmt.Printf("【unmarshalMediaConnectionInformation】错误! 媒体描述列表为空\n")
+        return nil, fmt.Errorf("no media description available")
+    }
+    latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
+    fmt.Printf("【unmarshalMediaConnectionInformation】关联到最新媒体描述 (索引:%d)\n", len(l.desc.MediaDescriptions)-1)
+
+    connInfo, err := l.unmarshalConnectionInformation()
+    if err != nil {
+        fmt.Printf("【unmarshalMediaConnectionInformation】错误! 连接信息解析失败: %v\n", err)
+        return nil, err
+    }
+    fmt.Printf("【unmarshalMediaConnectionInformation】获取连接信息对象: %+v\n", *connInfo)
+
+    latestMediaDesc.ConnectionInformation = connInfo
+    fmt.Printf("【unmarshalMediaConnectionInformation】已存储连接信息指针: %p\n", connInfo)
+
+    fmt.Printf("【unmarshalMediaConnectionInformation】状态转移: s15\n")
+    return s15, nil
 }
 
+// ================== 媒体带宽解析 ==================
 func unmarshalMediaBandwidth(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalMediaBandwidth】进入函数，开始解析媒体级带宽...\n")
 
-	latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
-	bandwidth, err := unmarshalBandwidth(value)
-	if err != nil {
-		return nil, fmt.Errorf("%w `b=%v`", errSDPInvalidSyntax, value)
-	}
-	latestMediaDesc.Bandwidth = append(latestMediaDesc.Bandwidth, *bandwidth)
+    // 安全获取最新媒体描述
+    if len(l.desc.MediaDescriptions) == 0 {
+        fmt.Printf("【unmarshalMediaBandwidth】错误! 媒体描述列表为空\n")
+        return nil, fmt.Errorf("no media description available")
+    }
+    latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
+    fmt.Printf("【unmarshalMediaBandwidth】关联到最新媒体描述 (索引:%d)\n", len(l.desc.MediaDescriptions)-1)
 
-	return s15, nil
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalMediaBandwidth】读取原始带宽值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalMediaBandwidth】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
+
+    bandwidth, err := unmarshalBandwidth(value)
+    if err != nil {
+        fmt.Printf("【unmarshalMediaBandwidth】错误! 带宽解析失败: %v | 原始输入:%#v\n", err, value)
+        return nil, fmt.Errorf("%w `b=%v`", errSDPInvalidSyntax, value)
+    }
+    fmt.Printf("【unmarshalMediaBandwidth】解析成功: 类型=%s 实验性=%t 值=%d\n",
+        bandwidth.Type, bandwidth.Experimental, bandwidth.Bandwidth)
+
+    latestMediaDesc.Bandwidth = append(latestMediaDesc.Bandwidth, *bandwidth)
+    fmt.Printf("【unmarshalMediaBandwidth】添加到带宽列表 (当前数量:%d)\n", len(latestMediaDesc.Bandwidth))
+
+    fmt.Printf("【unmarshalMediaBandwidth】状态转移: s15\n")
+    return s15, nil
 }
 
+// ================== 媒体加密密钥解析 ==================
 func unmarshalMediaEncryptionKey(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalMediaEncryptionKey】进入函数，开始解析媒体加密密钥...\n")
 
-	latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
-	encryptionKey := EncryptionKey(value)
-	latestMediaDesc.EncryptionKey = &encryptionKey
+    // 安全获取最新媒体描述
+    if len(l.desc.MediaDescriptions) == 0 {
+        fmt.Printf("【unmarshalMediaEncryptionKey】错误! 媒体描述列表为空\n")
+        return nil, fmt.Errorf("no media description available")
+    }
+    latestMediaDesc := l.desc.MediaDescriptions[len(l.desc.MediaDescriptions)-1]
+    fmt.Printf("【unmarshalMediaEncryptionKey】关联到最新媒体描述 (索引:%d)\n", len(l.desc.MediaDescriptions)-1)
 
-	return s14, nil
+    value, err := l.readLine()
+    secureValue := "******" + value[len(value)-4:] // 敏感信息脱敏
+    fmt.Printf("【unmarshalMediaEncryptionKey】读取密钥值 (脱敏): %q (原始长度:%d)\n", secureValue, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalMediaEncryptionKey】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
+
+    encryptionKey := EncryptionKey(value)
+    latestMediaDesc.EncryptionKey = &encryptionKey
+    fmt.Printf("【unmarshalMediaEncryptionKey】设置密钥指针地址: %p | 存储状态: %t\n", 
+        latestMediaDesc.EncryptionKey, latestMediaDesc.EncryptionKey != nil)
+
+    fmt.Printf("【unmarshalMediaEncryptionKey】状态转移: s14\n")
+    return s14, nil
 }
 
+// ================== 媒体属性解析 ==================
 func unmarshalMediaAttribute(l *lexer) (stateFn, error) {
-	value, err := l.readLine()
-	if err != nil {
-		return nil, err
-	}
+    fmt.Printf("【unmarshalMediaAttribute】进入函数，开始解析媒体属性...\n")
 
-	i := strings.IndexRune(value, ':')
-	a := l.cache.getMediaAttribute()
-	if i > 0 {
-		a.Key = value[:i]
-		a.Value = value[i+1:]
-	} else {
-		a.Key = value
-	}
+    value, err := l.readLine()
+    fmt.Printf("【unmarshalMediaAttribute】读取原始属性值: %q (长度:%d)\n", value, len(value))
+    if err != nil {
+        fmt.Printf("【unmarshalMediaAttribute】错误! 读取失败: %v\n", err)
+        return nil, err
+    }
 
-	return s14, nil
+    a := l.cache.getMediaAttribute()
+    fmt.Printf("【unmarshalMediaAttribute】获取属性缓存对象地址: %p\n", a)
+
+    i := strings.IndexRune(value, ':')
+    if i > 0 {
+        a.Key = value[:i]
+        a.Value = value[i+1:]
+        fmt.Printf("【unmarshalMediaAttribute】键值分割成功 | 位置:%d 键:%q 值长度:%d\n", 
+            i, a.Key, len(a.Value))
+    } else {
+        a.Key = value
+        fmt.Printf("【unmarshalMediaAttribute】警告! 未找到分隔符，仅设置键名: %q\n", a.Key)
+    }
+
+    fmt.Printf("【unmarshalMediaAttribute】最终属性对象: %s=%s\n", a.Key, a.Value)
+    fmt.Printf("【unmarshalMediaAttribute】状态转移: s14\n")
+    return s14, nil
+}
+
+// ================== 时间单位解析 ==================
+var timeUnitMap = map[byte]struct {
+    Name string
+    Mult int64
+}{
+    's': {"秒", 1},
+    'm': {"分钟", 60},
+    'h': {"小时", 60 * 60},
+    'd': {"天", 24 * 60 * 60},
 }
 
 func parseTimeUnits(value string) (num int64, err error) {
-	if len(value) == 0 {
-		return 0, fmt.Errorf("%w `%v`", errSDPInvalidValue, value)
-	}
-	k := timeShorthand(value[len(value)-1])
-	if k > 0 {
-		num, err = strconv.ParseInt(value[:len(value)-1], 10, 64)
-	} else {
-		k = 1
-		num, err = strconv.ParseInt(value, 10, 64)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("%w `%v`", errSDPInvalidValue, value)
-	}
+    fmt.Printf("【parseTimeUnits】开始解析时间单位: %q\n", value)
+    defer func() {
+        if err == nil {
+            fmt.Printf("【parseTimeUnits】转换结果: %d 秒\n", num)
+        }
+    }()
 
-	return num * k, nil
+    if len(value) == 0 {
+        fmt.Printf("【parseTimeUnits】错误! 输入为空\n")
+        return 0, fmt.Errorf("%w `%v`", errSDPInvalidValue, value)
+    }
+
+    lastChar := value[len(value)-1]
+    unit, isUnit := timeUnitMap[lastChar]
+    
+    var numStr string
+    if isUnit {
+        numStr = value[:len(value)-1]
+        fmt.Printf("【parseTimeUnits】检测到时间单位: %s (%c)\n", unit.Name, lastChar)
+    } else {
+        numStr = value
+        fmt.Printf("【parseTimeUnits】未检测到单位符号，默认使用秒\n")
+    }
+
+    num, err = strconv.ParseInt(numStr, 10, 64)
+    if err != nil {
+        fmt.Printf("【parseTimeUnits】错误! 数值转换失败: %v | 原始输入: %q\n", err, numStr)
+        return 0, fmt.Errorf("%w `%v`", errSDPInvalidValue, value)
+    }
+
+    if isUnit {
+        num *= unit.Mult
+        fmt.Printf("【parseTimeUnits】应用单位系数: %d × %d\n", num/unit.Mult, unit.Mult)
+    }
+
+    return num, nil
 }
+
 
 func timeShorthand(b byte) int64 {
 	// Some time offsets in the protocol can be provided with a shorthand
