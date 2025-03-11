@@ -24,7 +24,7 @@ import (
 
 // nolint:gocognit, cyclop
 func main() {
-	port := flag.Int("port", 9080, "http server port")
+	port := flag.Int("port", 1090, "http server port")
 	flag.Parse()
 
 	sdpChan := httpSDPServer(*port)

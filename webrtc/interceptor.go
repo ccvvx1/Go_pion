@@ -8,6 +8,7 @@ package webrtc
 
 import (
 	"sync/atomic"
+	"fmt"
 
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/nack"
@@ -22,19 +23,52 @@ import (
 // If you want to customize which interceptors are loaded, you should copy the
 // code from this method and remove unwanted interceptors.
 func RegisterDefaultInterceptors(mediaEngine *MediaEngine, interceptorRegistry *interceptor.Registry) error {
+	// 配置NACK丢包重传机制
+	fmt.Println("【NACK配置】开始配置网络丢包重传机制...")
 	if err := ConfigureNack(mediaEngine, interceptorRegistry); err != nil {
-		return err
-	}
+		fmt.Printf("!! 【NACK配置】关键错误：%v (mediaEngine=%p, registry=%p)\n", err, mediaEngine, interceptorRegistry)
+		return fmt.Errorf("NACK配置失败: %w", err)
+	} 
+	// fmt.Printf("【NACK配置】成功启用，当前注册拦截器数量：%d\n", interceptorRegistry.Len())
 
+	// 配置RTCP质量监控报告
+	fmt.Println("\n【RTCP配置】初始化质量监控系统...")
 	if err := ConfigureRTCPReports(interceptorRegistry); err != nil {
+		fmt.Printf("!! 【RTCP配置】报告生成器创建失败：%T %v\n", err, err)
+		fmt.Println("!! 可能原因：1. 拦截器未注册 2. 时钟源不可用")
 		return err
 	}
+	fmt.Println("【RTCP配置】已启用以下报告类型：")
+	fmt.Println("  - 发送端报告(SR) 接收端报告(RR)")
+	fmt.Println("  - 扩展报告(XR) 丢包统计")
 
+	// 配置多流编码头扩展
+	fmt.Println("\n【Simulcast】协商多分辨率流支持...")
 	if err := ConfigureSimulcastExtensionHeaders(mediaEngine); err != nil {
+		// fmt.Printf("!! 【Simulcast】扩展头注册失败，当前编码器：%+v\n", mediaEngine.GetCodecs())
+		fmt.Printf("!! 详细错误：%s\n", err.Error())
+		return err
+	} 
+	// fmt.Printf("【Simulcast】成功注册扩展头，当前支持的RTP扩展：%v\n", mediaEngine.GetHeaderExtensions())
+
+	// 配置带宽估计算法
+	fmt.Println("\n【拥塞控制】启动传输层带宽探测(TWCC)...")
+	if err := ConfigureTWCCSender(mediaEngine, interceptorRegistry); err != nil {
+		fmt.Printf("!! 【TWCC】带宽控制器初始化异常！错误链：%+v\n", err)
+		// if errors.Is(err, ErrCodecNotSupported) {
+		// 	fmt.Println("!! 紧急：检测到不支持的编码格式，请验证H264/V8配置")
+		// }
 		return err
 	}
+	// fmt.Printf("【拥塞控制】最终配置状态：\n  NACK：%t\n  RTCP：%t\n  Simulcast：%d层\n  TWCC：%t\n",
+	// 	mediaEngine.NackEnabled, 
+	// 	interceptorRegistry.HasRTCP(), 
+	// 	mediaEngine.SimulcastLayers,
+	// 	interceptorRegistry.HasTWCC(),
+	// )
 
-	return ConfigureTWCCSender(mediaEngine, interceptorRegistry)
+	return nil
+
 }
 
 // ConfigureRTCPReports will setup everything necessary for generating Sender and Receiver Reports.
